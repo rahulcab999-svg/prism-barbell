@@ -1,784 +1,424 @@
-'use client';
+"use client";
+import { useState } from "react";
 
-import { useState } from 'react';
-
-const GLOSSARY = {
-  'Absorbing Barrier':
-    'A point of no return — once you cross it, you cannot recover and the game is over.',
-  'Via Negativa':
-    'Improving by removing things (habits, risks, options) instead of adding more.',
-  Ergodicity:
-    'The difference between what works on average across many people and what works for you over time.',
-  '0 to 1':
-    'Creating something entirely new rather than copying what already exists (1 to N).',
-  'Power Law':
-    'A distribution where a few outcomes are enormously bigger than all the rest.',
-  'Non-Consensus Secret':
-    'A truth you believe that most other people do not agree with yet.',
-  'Creative Monopoly':
-    'Owning a niche so completely that you escape head-to-head competition.',
-  'Skin in the Game':
-    'Having something real to lose, so your incentives match your advice.',
-  Antifragility:
-    'Gaining strength from shocks and volatility instead of being broken by them.'
-};
-
-function Tooltip({ term }) {
-  const [open, setOpen] = useState(false);
-  const explanation = GLOSSARY[term];
-  if (!explanation) return null;
-
-  return (
-    <span
-      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-    >
-      <button
-        type="button"
-        aria-label={`Explain ${term}`}
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          marginLeft: 6,
-          width: 16,
-          height: 16,
-          borderRadius: '50%',
-          border: '1px solid #cbd5e1',
-          background: '#f8fafc',
-          color: '#64748b',
-          fontSize: 10,
-          fontWeight: 700,
-          lineHeight: 1,
-          cursor: 'pointer',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 0
-        }}
-      >
-        ?
-      </button>
-      {open && (
-        <span
-          role="tooltip"
-          style={{
-            position: 'absolute',
-            bottom: '130%',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: 240,
-            background: '#1a1a2e',
-            color: '#f8fafc',
-            fontSize: 12,
-            lineHeight: 1.5,
-            padding: '8px 10px',
-            borderRadius: 8,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.18)',
-            zIndex: 50,
-            textAlign: 'left'
-          }}
-        >
-          {explanation}
-        </span>
-      )}
-    </span>
-  );
-}
-
-const LENSES = [
-  { id: 'taleb', label: 'Nassim Nicholas Taleb' },
-  { id: 'thiel', label: 'Peter Thiel' }
-];
-
-const LOADING_STEPS = [
-  'Step 1: Grounding with live Google Search data...',
-  'Step 2: Running adversarial debate across active lenses...',
-  'Step 3: Formulating Barbell Synthesis & Kill Criteria...'
-];
-
-function pick() {
-  for (let i = 0; i < arguments.length; i++) {
-    const value = arguments[i];
-    if (value === null || value === undefined) continue;
-    if (typeof value === 'string' && value.trim() === '') continue;
-    return value;
-  }
-  return undefined;
-}
-
-function pickArray() {
-  for (let i = 0; i < arguments.length; i++) {
-    const value = arguments[i];
-    if (Array.isArray(value) && value.filter(Boolean).length > 0) {
-      return value.filter(Boolean);
-    }
-  }
-  return [];
-}
-
-function renderText(value, fallback = '—') {
-  if (value === null || value === undefined || value === '') return fallback;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number') return String(value);
-  if (Array.isArray(value)) {
-    return value
-      .map((v) => (typeof v === 'string' ? v : JSON.stringify(v)))
-      .join(' • ');
-  }
-  return JSON.stringify(value);
-}
-
-function FactList({ items, renderItem }) {
-  const list = Array.isArray(items) ? items.filter(Boolean) : [];
-  if (list.length === 0) return <p style={styles.muted}>No entries returned.</p>;
-  return (
-    <ul style={styles.ul}>
-      {list.map((item, i) => (
-        <li key={i} style={styles.li}>
-          {renderItem ? renderItem(item, i) : renderText(item)}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-export default function Page() {
-  const [question, setQuestion] = useState('');
+export default function Home() {
+  const [idea, setIdea] = useState("");
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [stepIndex, setStepIndex] = useState(0);
-  const [error, setError] = useState(null);
-  const [result, setResult] = useState(null);
-  const [lensesOpen, setLensesOpen] = useState(false);
-  const [reminderSet, setReminderSet] = useState(false);
+  const [error, setError] = useState("");
 
-  async function handleAnalyze() {
-    const trimmed = question.trim();
-    if (!trimmed || loading) return;
-
+  async function decide() {
+    if (!idea.trim()) return;
     setLoading(true);
-    setError(null);
-    setResult(null);
-    setReminderSet(false);
-    setStepIndex(0);
-
-    const stepTimer = setInterval(() => {
-      setStepIndex((prev) => (prev < LOADING_STEPS.length - 1 ? prev + 1 : prev));
-    }, 2600);
-
+    setError("");
+    setData(null);
     try {
-      const res = await fetch('/api/decide', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: trimmed })
+      const res = await fetch("/api/decide", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idea }),
       });
-
-      const payload = await res.json().catch(() => null);
-
-      if (!res.ok || !payload || payload.success !== true) {
-        throw new Error(
-          (payload && payload.error) || `Request failed with status ${res.status}.`
-        );
-      }
-
-      setResult(payload.data);
-    } catch (err) {
-      setError(err && err.message ? err.message : 'Something went wrong.');
+      const json = await res.json();
+      setData(json);
+    } catch (e) {
+      setError("Something went wrong. Please try again.");
     } finally {
-      clearInterval(stepTimer);
       setLoading(false);
     }
   }
 
-  const data = result || {};
-  const taleb = data.taleb || null;
-  const thiel = data.thiel || null;
-  const synthesis = data.synthesis || null;
+  function renderText(value) {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (Array.isArray(value)) {
+      return value
+        .map((v) => (typeof v === "string" ? v : JSON.stringify(v)))
+        .join("\n");
+    }
+    if (typeof value === "object") {
+      return Object.entries(value)
+        .map(([k, v]) => {
+          const label = k.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
+          if (Array.isArray(v)) {
+            return `${label}: ${v.join("; ")}`;
+          }
+          if (v && typeof v === "object") {
+            return `${label}: ${JSON.stringify(v)}`;
+          }
+          return `${label}: ${v}`;
+        })
+        .join("\n");
+    }
+    return String(value);
+  }
 
-  const talebClaim = pick(
-    taleb && taleb.claim,
-    taleb && taleb.downsideAudit,
-    taleb && taleb.audit
-  );
+  function renderBullets(value) {
+    if (!value) return null;
+    if (Array.isArray(value)) {
+      return (
+        <ul style={{ margin: "8px 0 0 0", padding: 0, listStyle: "none" }}>
+          {value.map((item, i) => (
+            <li key={i} style={{ marginBottom: 6 }}>
+              <span style={{ marginRight: 8, color: "#b8860b" }}>•</span>
+              {typeof item === "string" ? item : renderText(item)}
+            </li>
+          ))}
+        </ul>
+      );
+    }
+    if (typeof value === "string") {
+      return <p style={{ margin: "8px 0 0 0" }}>{value}</p>;
+    }
+    return <p style={{ margin: "8px 0 0 0" }}>{renderText(value)}</p>;
+  }
 
-  const talebBarrier = pick(
-    taleb && taleb.absorbingBarrier,
-    taleb && taleb.absorbing_barrier,
-    taleb && taleb.ruinRisk
-  );
+  function renderNumbered(value) {
+    if (!value) return null;
+    const items = Array.isArray(value) ? value : [value];
+    return (
+      <ol style={{ margin: "8px 0 0 0", paddingLeft: 20 }}>
+        {items.map((item, i) => (
+          <li key={i} style={{ marginBottom: 6 }}>
+            {typeof item === "string" ? item : renderText(item)}
+          </li>
+        ))}
+      </ol>
+    );
+  }
 
-  const talebRuinRisk = pick(
-    taleb && taleb.ruinRisk,
-    taleb && taleb.ruin_risk,
-    taleb && taleb.riskOfRuin
-  );
+  function getTalebContent(t) {
+    if (!t) return { main: "", barrier: "", viaNegativa: null, extras: [] };
+    if (typeof t === "string") return { main: t, barrier: "", viaNegativa: null, extras: [] };
+    const main =
+      t.claim || t.audit || t.analysis || t.summary || t.critique || t.text || "";
+    const barrier =
+      t.absorbingBarrier || t.ruinRisk || t.absorbing_barrier || t.barrier || "";
+    const viaNegativa =
+      t.viaNegativa || t.via_negativa || t.thingsToAvoid || t.avoid || null;
+    const used = new Set([
+      "claim", "audit", "analysis", "summary", "critique", "text",
+      "absorbingBarrier", "ruinRisk", "absorbing_barrier", "barrier",
+      "viaNegativa", "via_negativa", "thingsToAvoid", "avoid",
+    ]);
+    const extras = Object.entries(t).filter(
+      ([k, v]) => !used.has(k) && v !== null && v !== undefined && v !== ""
+    );
+    return { main, barrier, viaNegativa, extras };
+  }
 
-  const talebViaNegativa = pickArray(
-    taleb && taleb.viaNegativa,
-    taleb && taleb.via_negativa,
-    taleb && taleb.toAvoid
-  );
+  function getThielContent(t) {
+    if (!t) return { main: "", secret: "", advantages: null, extras: [] };
+    if (typeof t === "string") return { main: t, secret: "", advantages: null, extras: [] };
+    const main =
+      t.claim || t.audit || t.analysis || t.summary || t.critique || t.text || "";
+    const secret =
+      t.secret || t.zeroToOne || t.monopolyAngle || t.nonConsensus || t.zero_to_one || "";
+    const advantages =
+      t.advantages || t.powerLaw || t.power_law || t.moats || null;
+    const used = new Set([
+      "claim", "audit", "analysis", "summary", "critique", "text",
+      "secret", "zeroToOne", "monopolyAngle", "nonConsensus", "zero_to_one",
+      "advantages", "powerLaw", "power_law", "moats",
+    ]);
+    const extras = Object.entries(t).filter(
+      ([k, v]) => !used.has(k) && v !== null && v !== undefined && v !== ""
+    );
+    return { main, secret, advantages, extras };
+  }
 
-  const talebErgodicity = pick(
-    taleb && taleb.ergodicityCheck,
-    taleb && taleb.ergodicity_check,
-    taleb && taleb.ergodicity
-  );
+  function getSynthesisContent(s) {
+    if (!s) return { verdict: "Proceed", rationale: "", killCriteria: "", unfairAdvantage: "", nextActions: [], extras: [] };
+    if (typeof s === "string") return { verdict: "Proceed", rationale: s, killCriteria: "", unfairAdvantage: "", nextActions: [], extras: [] };
+    const verdict = s.verdict || "Proceed";
+    const rationale = s.summary || s.rationale || s.why || s.reasoning || "";
+    const killCriteria = s.killCriteria || s.talebFloor || s.survival || s.floor || "";
+    const unfairAdvantage = s.unfairAdvantage || s.thielCeiling || s.ceiling || s.tenX || "";
+    const nextActions = s.nextActions || s.actions || s.steps || [];
+    const used = new Set([
+      "verdict", "summary", "rationale", "why", "reasoning",
+      "killCriteria", "talebFloor", "survival", "floor",
+      "unfairAdvantage", "thielCeiling", "ceiling", "tenX",
+      "nextActions", "actions", "steps",
+    ]);
+    const extras = Object.entries(s).filter(
+      ([k, v]) => !used.has(k) && v !== null && v !== undefined && v !== ""
+    );
+    return { verdict, rationale, killCriteria, unfairAdvantage, nextActions, extras };
+  }
 
-  const thielClaim = pick(
-    thiel && thiel.claim,
-    thiel && thiel.upsideAudit,
-    thiel && thiel.audit
-  );
+  const taleb = getTalebContent(data?.taleb);
+  const thiel = getThielContent(data?.thiel);
+  const synthesis = getSynthesisContent(data?.synthesis);
 
-  const thielZeroToOne = pick(
-    thiel && thiel.zeroToOne,
-    thiel && thiel.zero_to_one,
-    thiel && thiel.differentiation
-  );
+  const cardStyle = {
+    background: "#fff",
+    border: "1px solid #e5e0d5",
+    borderRadius: 12,
+    padding: "24px 28px",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+    flex: 1,
+    minWidth: 280,
+  };
 
-  const thielSecret = pick(
-    thiel && thiel.secret,
-    thiel && thiel.nonConsensusSecret,
-    thiel && thiel.non_consensus_secret
-  );
+  const labelStyle = {
+    fontSize: 12,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase",
+    color: "#8a7f6a",
+    marginBottom: 12,
+    fontWeight: 600,
+  };
 
-  const thielMonopoly = pick(
-    thiel && thiel.monopolyAngle,
-    thiel && thiel.creativeMonopoly,
-    thiel && thiel.creative_monopoly
-  );
+  const bodyStyle = {
+    fontSize: 16,
+    lineHeight: 1.6,
+    color: "#2c2c2c",
+    whiteSpace: "pre-wrap",
+  };
 
-  const thielPowerLaw = pick(
-    thiel && thiel.powerLaw,
-    thiel && thiel.power_law,
-    thiel && thiel.powerLawFocus
-  );
-
-  const verdict = renderText(pick(synthesis && synthesis.verdict), '—');
-  const verdictColor =
-    verdict.toLowerCase() === 'proceed'
-      ? '#16a34a'
-      : verdict.toLowerCase() === 'abort'
-      ? '#dc2626'
-      : '#d97706';
-
-  const confidenceValue = pick(synthesis && synthesis.confidence, 75);
-  const confidence = Math.max(0, Math.min(100, Math.round(Number(confidenceValue) || 75)));
-
-  const talebFloor = pick(
-    synthesis && synthesis.killCriteria,
-    synthesis && synthesis.talebFloor,
-    synthesis && synthesis.survivalFloor
-  );
-
-  const thielCeiling = pick(
-    synthesis && synthesis.unfairAdvantage,
-    synthesis && synthesis.thielCeiling,
-    synthesis && synthesis.upsideCeiling
-  );
-
-  const nextActions = pickArray(
-    synthesis && synthesis.nextActions,
-    synthesis && synthesis.actions
-  );
-
-  const verdictReasoning = pick(
-    synthesis && synthesis.verdictReasoning,
-    synthesis && synthesis.verdict_reasoning,
-    synthesis && synthesis.reasoning
-  );
+  const subLabelStyle = {
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#5a5142",
+    marginTop: 16,
+    marginBottom: 4,
+  };
 
   return (
-    <main style={styles.page}>
-      <div style={styles.container}>
-        <header style={styles.header}>
-          <div style={styles.brandRow}>
-            <div style={styles.brandIcon}>⚖️</div>
-            <div>
-              <h1 style={styles.title}>PRISM</h1>
-              <p style={styles.subtitle}>AI Decision Operating System</p>
-            </div>
-          </div>
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "#faf8f3",
+        fontFamily:
+          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+        padding: "48px 24px",
+      }}
+    >
+      <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+        <h1
+          style={{
+            fontSize: 28,
+            fontWeight: 700,
+            color: "#2c2c2c",
+            marginBottom: 8,
+          }}
+        >
+          Thinking OS <span style={{ color: "#b8860b" }}>v2</span>
+        </h1>
+        <p style={{ color: "#8a7f6a", marginBottom: 32, fontSize: 15 }}>
+          Run any idea through the Taleb, Thiel, and Barbell Synthesis filters.
+        </p>
 
-          <div style={styles.lensWrap}>
-            <button
-              type="button"
-              onClick={() => setLensesOpen((v) => !v)}
-              style={styles.lensPill}
-              aria-expanded={lensesOpen}
-            >
-              <span style={styles.lensDot} />
-              Active Lenses: {LENSES.map((l) => l.label).join(' · ')}
-              <span style={styles.lensCaret}>{lensesOpen ? '▲' : '▼'}</span>
-            </button>
-            {lensesOpen && (
-              <div style={styles.lensPanel}>
-                <p style={styles.lensPanelTitle}>Active Frameworks</p>
-                <ul style={styles.ul}>
-                  {LENSES.map((l) => (
-                    <li key={l.id} style={styles.li}>
-                      {l.label}
-                    </li>
-                  ))}
-                </ul>
-                <p style={styles.muted}>
-                  More lenses can be added to the barbell over time.
-                </p>
-              </div>
-            )}
-          </div>
-        </header>
-
-        <section style={styles.card}>
-          <h2 style={styles.h2}>The Dilemma</h2>
-          <p style={styles.muted}>
-            Describe the decision, the stakes, and any constraints you are working under.
-          </p>
-          <textarea
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            placeholder="e.g. Should I leave my stable job to build a niche AI product with 6 months of runway?"
-            rows={6}
-            style={styles.textarea}
-            disabled={loading}
+        <div style={{ display: "flex", gap: 12, marginBottom: 32 }}>
+          <input
+            value={idea}
+            onChange={(e) => setIdea(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && decide()}
+            placeholder="Describe your idea, decision, or bet..."
+            style={{
+              flex: 1,
+              padding: "14px 18px",
+              fontSize: 16,
+              border: "1px solid #e5e0d5",
+              borderRadius: 10,
+              background: "#fff",
+              outline: "none",
+              color: "#2c2c2c",
+            }}
           />
           <button
-            type="button"
-            onClick={handleAnalyze}
-            disabled={loading || question.trim().length === 0}
+            onClick={decide}
+            disabled={loading}
             style={{
-              ...styles.primaryButton,
-              opacity: loading || question.trim().length === 0 ? 0.6 : 1,
-              cursor: loading || question.trim().length === 0 ? 'not-allowed' : 'pointer'
+              padding: "14px 28px",
+              fontSize: 16,
+              fontWeight: 600,
+              color: "#fff",
+              background: loading ? "#c9b98a" : "#b8860b",
+              border: "none",
+              borderRadius: 10,
+              cursor: loading ? "not-allowed" : "pointer",
             }}
           >
-            {loading ? 'Analyzing…' : 'Analyze Decision →'}
+            {loading ? "Thinking..." : "Decide"}
           </button>
-        </section>
-
-        {loading && (
-          <section style={styles.card}>
-            <div style={styles.pulseWrap}>
-              <span style={styles.pulseDot} />
-              <p style={styles.loadingText}>{LOADING_STEPS[stepIndex]}</p>
-            </div>
-            <div style={styles.progressTrack}>
-              <div
-                style={{
-                  ...styles.progressFill,
-                  width: `${((stepIndex + 1) / LOADING_STEPS.length) * 100}%`
-                }}
-              />
-            </div>
-          </section>
-        )}
+        </div>
 
         {error && (
-          <section style={{ ...styles.card, borderColor: '#fecaca', background: '#fef2f2' }}>
-            <h2 style={{ ...styles.h2, color: '#b91c1c' }}>Analysis Failed</h2>
-            <p style={{ ...styles.muted, color: '#b91c1c' }}>{error}</p>
-          </section>
+          <div style={{ color: "#b00020", marginBottom: 24 }}>{error}</div>
         )}
 
-        {result && (
+        {data && (
           <>
-            <section style={styles.debateGrid}>
-              <article style={{ ...styles.card, borderTop: '4px solid #f43f5e' }}>
-                <div style={styles.cardHeader}>
-                  <h2 style={styles.h2}>Nassim Nicholas Taleb</h2>
-                  <span style={{ ...styles.tag, background: '#ffe4e6', color: '#be123c' }}>
-                    Downside &amp; Ruin Audit
-                  </span>
-                </div>
-
-                <h3 style={styles.h3}>Claim / Downside Audit</h3>
-                <p style={styles.body}>{renderText(talebClaim)}</p>
-
-                <h3 style={styles.h3}>
-                  Absorbing Barrier
-                  <Tooltip term="Absorbing Barrier" />
-                </h3>
-                <p style={styles.body}>{renderText(talebBarrier)}</p>
-
-                <h3 style={styles.h3}>Ruin Risk</h3>
-                <p style={styles.body}>{renderText(talebRuinRisk)}</p>
-
-                <h3 style={styles.h3}>
-                  Via Negativa
-                  <Tooltip term="Via Negativa" />
-                </h3>
-                <FactList items={talebViaNegativa} />
-
-                <h3 style={styles.h3}>
-                  Ergodicity Check
-                  <Tooltip term="Ergodicity" />
-                </h3>
-                <p style={styles.body}>{renderText(talebErgodicity)}</p>
-              </article>
-
-              <article style={{ ...styles.card, borderTop: '4px solid #0ea5e9' }}>
-                <div style={styles.cardHeader}>
-                  <h2 style={styles.h2}>Peter Thiel</h2>
-                  <span style={{ ...styles.tag, background: '#e0f2fe', color: '#0369a1' }}>
-                    Upside &amp; Monopoly Audit
-                  </span>
-                </div>
-
-                <h3 style={styles.h3}>Claim / Upside Audit</h3>
-                <p style={styles.body}>{renderText(thielClaim)}</p>
-
-                <h3 style={styles.h3}>
-                  0 to 1
-                  <Tooltip term="0 to 1" />
-                </h3>
-                <p style={styles.body}>{renderText(thielZeroToOne)}</p>
-
-                <h3 style={styles.h3}>
-                  Non-Consensus Secret
-                  <Tooltip term="Non-Consensus Secret" />
-                </h3>
-                <p style={styles.body}>{renderText(thielSecret)}</p>
-
-                <h3 style={styles.h3}>
-                  Creative Monopoly
-                  <Tooltip term="Creative Monopoly" />
-                </h3>
-                <p style={styles.body}>{renderText(thielMonopoly)}</p>
-
-                <h3 style={styles.h3}>
-                  Power Law Focus
-                  <Tooltip term="Power Law" />
-                </h3>
-                <p style={styles.body}>{renderText(thielPowerLaw)}</p>
-              </article>
-            </section>
-
-            <section style={styles.synthesisCard}>
-              <div style={styles.cardHeader}>
-                <h2 style={styles.h2}>Barbell Synthesis</h2>
-                <span style={{ ...styles.tag, background: '#fef3c7', color: '#92400e' }}>
-                  Thinking OS Verdict
-                </span>
-              </div>
-
-              <div style={styles.verdictRow}>
-                <div>
-                  <p style={styles.muted}>Final Verdict</p>
-                  <p style={{ ...styles.verdict, color: verdictColor }}>{verdict}</p>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <p style={styles.muted}>Confidence Score</p>
-                  <p style={styles.confidence}>{confidence}%</p>
+            <div
+              style={{
+                display: "flex",
+                gap: 20,
+                flexWrap: "wrap",
+                marginBottom: 20,
+              }}
+            >
+              {/* Taleb Card */}
+              <div style={cardStyle}>
+                <div style={labelStyle}>Taleb — Antifragility Audit</div>
+                <div style={bodyStyle}>
+                  {taleb.main ? (
+                    <p style={{ margin: 0 }}>{renderText(taleb.main)}</p>
+                  ) : null}
+                  {taleb.barrier ? (
+                    <>
+                      <div style={subLabelStyle}>Absorbing Barrier / Ruin Risk</div>
+                      <p style={{ margin: 0 }}>{renderText(taleb.barrier)}</p>
+                    </>
+                  ) : null}
+                  {taleb.viaNegativa ? (
+                    <>
+                      <div style={subLabelStyle}>Via Negativa — Things to Avoid</div>
+                      {renderBullets(taleb.viaNegativa)}
+                    </>
+                  ) : null}
+                  {taleb.extras.length > 0 &&
+                    taleb.extras.map(([k, v]) => (
+                      <div key={k}>
+                        <div style={subLabelStyle}>
+                          {k
+                            .replace(/([A-Z])/g, " $1")
+                            .replace(/^./, (c) => c.toUpperCase())}
+                        </div>
+                        {renderBullets(v)}
+                      </div>
+                    ))}
+                  {!taleb.main &&
+                    !taleb.barrier &&
+                    !taleb.viaNegativa &&
+                    taleb.extras.length === 0 && (
+                      <p style={{ margin: 0, color: "#8a7f6a" }}>
+                        {renderText(data.taleb) || "—"}
+                      </p>
+                    )}
                 </div>
               </div>
 
-              {verdictReasoning && (
-                <p style={styles.body}>{renderText(verdictReasoning)}</p>
-              )}
-
-              <div style={styles.floorCeilingGrid}>
-                <div style={styles.floorBox}>
-                  <h3 style={styles.h3}>Taleb Floor — Survival &amp; Kill Criteria</h3>
-                  <p style={styles.body}>{renderText(talebFloor)}</p>
-                </div>
-                <div style={styles.ceilingBox}>
-                  <h3 style={styles.h3}>Thiel Ceiling — Unfair Advantage &amp; 10x Leap</h3>
-                  <p style={styles.body}>{renderText(thielCeiling)}</p>
+              {/* Thiel Card */}
+              <div style={cardStyle}>
+                <div style={labelStyle}>Thiel — Monopoly & Secrets</div>
+                <div style={bodyStyle}>
+                  {thiel.main ? (
+                    <p style={{ margin: 0 }}>{renderText(thiel.main)}</p>
+                  ) : null}
+                  {thiel.secret ? (
+                    <>
+                      <div style={subLabelStyle}>
+                        0 to 1 / Non-consensus Secret
+                      </div>
+                      <p style={{ margin: 0 }}>{renderText(thiel.secret)}</p>
+                    </>
+                  ) : null}
+                  {thiel.advantages ? (
+                    <>
+                      <div style={subLabelStyle}>
+                        Advantages / Power Law
+                      </div>
+                      {renderBullets(thiel.advantages)}
+                    </>
+                  ) : null}
+                  {thiel.extras.length > 0 &&
+                    thiel.extras.map(([k, v]) => (
+                      <div key={k}>
+                        <div style={subLabelStyle}>
+                          {k
+                            .replace(/([A-Z])/g, " $1")
+                            .replace(/^./, (c) => c.toUpperCase())}
+                        </div>
+                        {renderBullets(v)}
+                      </div>
+                    ))}
+                  {!thiel.main &&
+                    !thiel.secret &&
+                    !thiel.advantages &&
+                    thiel.extras.length === 0 && (
+                      <p style={{ margin: 0, color: "#8a7f6a" }}>
+                        {renderText(data.thiel) || "—"}
+                      </p>
+                    )}
                 </div>
               </div>
+            </div>
 
-              <h3 style={styles.h3}>3 Immediate Next Actions</h3>
-              <FactList items={nextActions} />
-
-              <button
-                type="button"
-                onClick={() => setReminderSet(true)}
-                disabled={reminderSet}
+            {/* Synthesis Card */}
+            <div
+              style={{
+                background: "#fffdf5",
+                border: "1px solid #e8dcc0",
+                borderRadius: 12,
+                padding: "32px 36px",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+              }}
+            >
+              <div style={labelStyle}>Barbell Synthesis</div>
+              <div
                 style={{
-                  ...styles.secondaryButton,
-                  opacity: reminderSet ? 0.7 : 1,
-                  cursor: reminderSet ? 'default' : 'pointer'
+                  fontSize: 24,
+                  fontWeight: 700,
+                  color: "#b8860b",
+                  marginBottom: 20,
                 }}
               >
-                {reminderSet ? '✓ 30-Day Check-in Scheduled' : 'Remind me in 30 days'}
-              </button>
-            </section>
+                {synthesis.verdict}
+              </div>
+              <div style={bodyStyle}>
+                {synthesis.rationale ? (
+                  <>
+                    <div style={subLabelStyle}>Main Rationale</div>
+                    <p style={{ margin: 0 }}>{renderText(synthesis.rationale)}</p>
+                  </>
+                ) : null}
+                {synthesis.killCriteria ? (
+                  <>
+                    <div style={subLabelStyle}>
+                      Taleb Floor — Survival / Kill Criteria
+                    </div>
+                    <p style={{ margin: 0 }}>
+                      {renderText(synthesis.killCriteria)}
+                    </p>
+                  </>
+                ) : null}
+                {synthesis.unfairAdvantage ? (
+                  <>
+                    <div style={subLabelStyle}>
+                      Thiel Ceiling — Unfair Advantage / 10x
+                    </div>
+                    <p style={{ margin: 0 }}>
+                      {renderText(synthesis.unfairAdvantage)}
+                    </p>
+                  </>
+                ) : null}
+                {synthesis.nextActions &&
+                  (Array.isArray(synthesis.nextActions)
+                    ? synthesis.nextActions.length > 0
+                    : true) && (
+                    <>
+                      <div style={subLabelStyle}>Immediate Actions</div>
+                      {renderNumbered(synthesis.nextActions)}
+                    </>
+                  )}
+                {synthesis.extras.length > 0 &&
+                  synthesis.extras.map(([k, v]) => (
+                    <div key={k}>
+                      <div style={subLabelStyle}>
+                        {k
+                          .replace(/([A-Z])/g, " $1")
+                          .replace(/^./, (c) => c.toUpperCase())}
+                      </div>
+                      {renderBullets(v)}
+                    </div>
+                  ))}
+              </div>
+            </div>
           </>
         )}
-
-        <footer style={styles.footer}>
-          PRISM · AI Decision Operating System · Barbell Engine v2
-        </footer>
       </div>
     </main>
   );
 }
-
-const styles = {
-  page: {
-    minHeight: '100vh',
-    background: '#f0f2f5',
-    color: '#1a1a2e',
-    padding: '32px 16px 64px'
-  },
-  container: {
-    maxWidth: 1040,
-    margin: '0 auto',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 20
-  },
-  header: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: 16,
-    justifyContent: 'space-between',
-    alignItems: 'flex-start'
-  },
-  brandRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 14
-  },
-  brandIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-    color: '#ffffff',
-    fontSize: 24,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 4px 12px rgba(99, 102, 241, 0.35)'
-  },
-  title: {
-    margin: 0,
-    fontSize: 24,
-    fontWeight: 700,
-    letterSpacing: '0.02em'
-  },
-  subtitle: {
-    margin: 0,
-    fontSize: 16,
-    color: '#64748b'
-  },
-  lensWrap: {
-    position: 'relative'
-  },
-  lensPill: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '8px 14px',
-    borderRadius: 999,
-    border: '1px solid #e2e8f0',
-    background: '#ffffff',
-    color: '#1a1a2e',
-    fontSize: 14,
-    cursor: 'pointer',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.06)'
-  },
-  lensDot: {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)'
-  },
-  lensCaret: {
-    fontSize: 10,
-    color: '#64748b'
-  },
-  lensPanel: {
-    position: 'absolute',
-    top: '110%',
-    right: 0,
-    width: 280,
-    background: '#ffffff',
-    border: '1px solid #e2e8f0',
-    borderRadius: 12,
-    padding: 16,
-    boxShadow: '0 8px 24px rgba(0,0,0,0.10)',
-    zIndex: 40
-  },
-  lensPanelTitle: {
-    margin: '0 0 8px',
-    fontSize: 14,
-    fontWeight: 600
-  },
-  card: {
-    background: '#ffffff',
-    border: '1px solid #e2e8f0',
-    borderRadius: 14,
-    padding: 24,
-    boxShadow: '0 1px 3px rgba(0,0,0,0.06)'
-  },
-  synthesisCard: {
-    background: '#fffff0',
-    border: '1px solid #f6e05e',
-    borderRadius: 14,
-    padding: 24,
-    boxShadow: '0 1px 3px rgba(0,0,0,0.06)'
-  },
-  debateGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-    gap: 20
-  },
-  cardHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 12,
-    flexWrap: 'wrap',
-    marginBottom: 12
-  },
-  h2: {
-    margin: 0,
-    fontSize: 18,
-    fontWeight: 700
-  },
-  h3: {
-    margin: '18px 0 6px',
-    fontSize: 16,
-    fontWeight: 600,
-    display: 'flex',
-    alignItems: 'center'
-  },
-  body: {
-    margin: 0,
-    fontSize: 16,
-    lineHeight: 1.7,
-    color: '#1a1a2e'
-  },
-  muted: {
-    margin: '4px 0',
-    fontSize: 14,
-    color: '#64748b'
-  },
-  tag: {
-    fontSize: 12,
-    fontWeight: 600,
-    padding: '4px 10px',
-    borderRadius: 999,
-    whiteSpace: 'nowrap'
-  },
-  ul: {
-    margin: '6px 0 0',
-    paddingLeft: 20,
-    fontSize: 16,
-    lineHeight: 1.7
-  },
-  li: {
-    marginBottom: 6
-  },
-  textarea: {
-    width: '100%',
-    marginTop: 12,
-    marginBottom: 16,
-    padding: 14,
-    fontSize: 16,
-    lineHeight: 1.7,
-    fontFamily: 'inherit',
-    color: '#1a1a2e',
-    background: '#f8fafc',
-    border: '1px solid #e2e8f0',
-    borderRadius: 10,
-    resize: 'vertical',
-    outline: 'none'
-  },
-  primaryButton: {
-    width: '100%',
-    padding: '14px 20px',
-    fontSize: 16,
-    fontWeight: 600,
-    color: '#ffffff',
-    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-    border: 'none',
-    borderRadius: 10,
-    boxShadow: '0 4px 14px rgba(99, 102, 241, 0.35)'
-  },
-  secondaryButton: {
-    marginTop: 20,
-    padding: '12px 18px',
-    fontSize: 15,
-    fontWeight: 600,
-    color: '#1a1a2e',
-    background: '#ffffff',
-    border: '1px solid #f6e05e',
-    borderRadius: 10,
-    cursor: 'pointer'
-  },
-  pulseWrap: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12
-  },
-  pulseDot: {
-    width: 12,
-    height: 12,
-    borderRadius: '50%',
-    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-    animation: 'prismPulse 1.4s ease-in-out infinite'
-  },
-  loadingText: {
-    margin: 0,
-    fontSize: 16,
-    fontWeight: 500
-  },
-  progressTrack: {
-    marginTop: 14,
-    height: 6,
-    borderRadius: 999,
-    background: '#e2e8f0',
-    overflow: 'hidden'
-  },
-  progressFill: {
-    height: '100%',
-    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-    transition: 'width 0.6s ease'
-  },
-  verdictRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    gap: 16,
-    flexWrap: 'wrap',
-    marginBottom: 12
-  },
-  verdict: {
-    margin: 0,
-    fontSize: 24,
-    fontWeight: 700,
-    letterSpacing: '0.02em'
-  },
-  confidence: {
-    margin: 0,
-    fontSize: 24,
-    fontWeight: 700
-  },
-  floorCeilingGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-    gap: 16,
-    marginTop: 18
-  },
-  floorBox: {
-    background: '#fff1f2',
-    border: '1px solid #fecdd3',
-    borderRadius: 10,
-    padding: 16
-  },
-  ceilingBox: {
-    background: '#f0f9ff',
-    border: '1px solid #bae6fd',
-    borderRadius: 10,
-    padding: 16
-  },
-  footer: {
-    textAlign: 'center',
-    fontSize: 13,
-    color: '#94a3b8',
-    marginTop: 24
-  }
-};
