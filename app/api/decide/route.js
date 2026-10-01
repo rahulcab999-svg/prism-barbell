@@ -233,11 +233,13 @@ export async function POST(request) {
     }
 
     const question =
-      body && typeof body.question === 'string' ? body.question.trim() : '';
+      body && typeof (body.idea || body.question) === 'string'
+        ? (body.idea || body.question).trim()
+        : '';
 
     if (!question) {
       return NextResponse.json(
-        { success: false, error: 'Missing required field: question.' },
+        { success: false, error: 'Missing required field: question or idea.' },
         { status: 400 }
       );
     }
