@@ -96,14 +96,28 @@ const LOADING_STEPS = [
   'Step 3: Formulating Barbell Synthesis & Kill Criteria...'
 ];
 
-function asArray(value) {
-  if (Array.isArray(value)) return value.filter(Boolean);
-  if (value === null || value === undefined || value === '') return [];
-  return [value];
+function pick() {
+  for (let i = 0; i < arguments.length; i++) {
+    const value = arguments[i];
+    if (value === null || value === undefined) continue;
+    if (typeof value === 'string' && value.trim() === '') continue;
+    return value;
+  }
+  return undefined;
 }
 
-function renderText(value) {
-  if (value === null || value === undefined) return '—';
+function pickArray() {
+  for (let i = 0; i < arguments.length; i++) {
+    const value = arguments[i];
+    if (Array.isArray(value) && value.filter(Boolean).length > 0) {
+      return value.filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function renderText(value, fallback = '—') {
+  if (value === null || value === undefined || value === '') return fallback;
   if (typeof value === 'string') return value;
   if (typeof value === 'number') return String(value);
   if (Array.isArray(value)) {
@@ -115,13 +129,13 @@ function renderText(value) {
 }
 
 function FactList({ items, renderItem }) {
-  const list = asArray(items);
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
   if (list.length === 0) return <p style={styles.muted}>No entries returned.</p>;
   return (
     <ul style={styles.ul}>
       {list.map((item, i) => (
         <li key={i} style={styles.li}>
-          {renderItem ? renderItem(item) : renderText(item)}
+          {renderItem ? renderItem(item, i) : renderText(item)}
         </li>
       ))}
     </ul>
@@ -175,12 +189,72 @@ export default function Page() {
     }
   }
 
-  const research = result && result.research ? result.research : null;
-  const taleb = result && result.taleb ? result.taleb : null;
-  const thiel = result && result.thiel ? result.thiel : null;
-  const synthesis = result && result.synthesis ? result.synthesis : null;
+  const data = result || {};
+  const taleb = data.taleb || null;
+  const thiel = data.thiel || null;
+  const synthesis = data.synthesis || null;
 
-  const verdict = synthesis && synthesis.verdict ? String(synthesis.verdict) : '—';
+  const talebClaim = pick(
+    taleb && taleb.claim,
+    taleb && taleb.downsideAudit,
+    taleb && taleb.audit
+  );
+
+  const talebBarrier = pick(
+    taleb && taleb.absorbingBarrier,
+    taleb && taleb.absorbing_barrier,
+    taleb && taleb.ruinRisk
+  );
+
+  const talebRuinRisk = pick(
+    taleb && taleb.ruinRisk,
+    taleb && taleb.ruin_risk,
+    taleb && taleb.riskOfRuin
+  );
+
+  const talebViaNegativa = pickArray(
+    taleb && taleb.viaNegativa,
+    taleb && taleb.via_negativa,
+    taleb && taleb.toAvoid
+  );
+
+  const talebErgodicity = pick(
+    taleb && taleb.ergodicityCheck,
+    taleb && taleb.ergodicity_check,
+    taleb && taleb.ergodicity
+  );
+
+  const thielClaim = pick(
+    thiel && thiel.claim,
+    thiel && thiel.upsideAudit,
+    thiel && thiel.audit
+  );
+
+  const thielZeroToOne = pick(
+    thiel && thiel.zeroToOne,
+    thiel && thiel.zero_to_one,
+    thiel && thiel.differentiation
+  );
+
+  const thielSecret = pick(
+    thiel && thiel.secret,
+    thiel && thiel.nonConsensusSecret,
+    thiel && thiel.non_consensus_secret
+  );
+
+  const thielMonopoly = pick(
+    thiel && thiel.monopolyAngle,
+    thiel && thiel.creativeMonopoly,
+    thiel && thiel.creative_monopoly
+  );
+
+  const thielPowerLaw = pick(
+    thiel && thiel.powerLaw,
+    thiel && thiel.power_law,
+    thiel && thiel.powerLawFocus
+  );
+
+  const verdict = renderText(pick(synthesis && synthesis.verdict), '—');
   const verdictColor =
     verdict.toLowerCase() === 'proceed'
       ? '#16a34a'
@@ -188,12 +262,31 @@ export default function Page() {
       ? '#dc2626'
       : '#d97706';
 
-  const confidenceRaw =
-    synthesis && typeof synthesis.confidence_score === 'number'
-      ? synthesis.confidence_score
-      : null;
-  const confidence =
-    confidenceRaw === null ? null : Math.max(0, Math.min(100, Math.round(confidenceRaw)));
+  const confidenceValue = pick(synthesis && synthesis.confidence, 75);
+  const confidence = Math.max(0, Math.min(100, Math.round(Number(confidenceValue) || 75)));
+
+  const talebFloor = pick(
+    synthesis && synthesis.killCriteria,
+    synthesis && synthesis.talebFloor,
+    synthesis && synthesis.survivalFloor
+  );
+
+  const thielCeiling = pick(
+    synthesis && synthesis.unfairAdvantage,
+    synthesis && synthesis.thielCeiling,
+    synthesis && synthesis.upsideCeiling
+  );
+
+  const nextActions = pickArray(
+    synthesis && synthesis.nextActions,
+    synthesis && synthesis.actions
+  );
+
+  const verdictReasoning = pick(
+    synthesis && synthesis.verdictReasoning,
+    synthesis && synthesis.verdict_reasoning,
+    synthesis && synthesis.reasoning
+  );
 
   return (
     <main style={styles.page}>
@@ -289,164 +382,127 @@ export default function Page() {
 
         {result && (
           <>
-            {research && (
-              <section style={styles.card}>
-                <div style={styles.evidencePill}>
-                  <span style={styles.evidenceDot} />
-                  Live Evidence — verified via Google Search
-                </div>
-
-                <h3 style={styles.h3}>Verified Facts</h3>
-                <FactList
-                  items={research.verified_facts}
-                  renderItem={(f) =>
-                    typeof f === 'string'
-                      ? f
-                      : `${renderText(f.fact)}${
-                          f.source ? ` — ${renderText(f.source)}` : ''
-                        }`
-                  }
-                />
-
-                <h3 style={styles.h3}>Industry Base Rates</h3>
-                <FactList items={research.base_rates} />
-
-                <h3 style={styles.h3}>Unverified Assumptions</h3>
-                <FactList items={research.unverified_assumptions} />
-              </section>
-            )}
-
             <section style={styles.debateGrid}>
-              {taleb && (
-                <article style={{ ...styles.card, borderTop: '4px solid #f43f5e' }}>
-                  <div style={styles.cardHeader}>
-                    <h2 style={styles.h2}>Nassim Nicholas Taleb</h2>
-                    <span style={{ ...styles.tag, background: '#ffe4e6', color: '#be123c' }}>
-                      Downside &amp; Ruin Audit
-                    </span>
-                  </div>
-
-                  <h3 style={styles.h3}>Downside Audit</h3>
-                  <p style={styles.body}>{renderText(taleb.downside_audit)}</p>
-
-                  <h3 style={styles.h3}>
-                    Absorbing Barrier
-                    <Tooltip term="Absorbing Barrier" />
-                  </h3>
-                  <FactList items={taleb.absorbing_barriers} />
-
-                  <h3 style={styles.h3}>Ruin Risk</h3>
-                  <p style={styles.body}>{renderText(taleb.ruin_risk)}</p>
-
-                  <h3 style={styles.h3}>
-                    Via Negativa
-                    <Tooltip term="Via Negativa" />
-                  </h3>
-                  <FactList items={taleb.via_negativa} />
-
-                  <h3 style={styles.h3}>
-                    Ergodicity Check
-                    <Tooltip term="Ergodicity" />
-                  </h3>
-                  <p style={styles.body}>{renderText(taleb.rebuttal_to_thiel)}</p>
-                </article>
-              )}
-
-              {thiel && (
-                <article style={{ ...styles.card, borderTop: '4px solid #0ea5e9' }}>
-                  <div style={styles.cardHeader}>
-                    <h2 style={styles.h2}>Peter Thiel</h2>
-                    <span style={{ ...styles.tag, background: '#e0f2fe', color: '#0369a1' }}>
-                      Upside &amp; Monopoly Audit
-                    </span>
-                  </div>
-
-                  <h3 style={styles.h3}>Upside Audit</h3>
-                  <p style={styles.body}>{renderText(thiel.upside_audit)}</p>
-
-                  <h3 style={styles.h3}>
-                    0 to 1
-                    <Tooltip term="0 to 1" />
-                  </h3>
-                  <p style={styles.body}>{renderText(thiel.zero_to_one)}</p>
-
-                  <h3 style={styles.h3}>
-                    Non-Consensus Secret
-                    <Tooltip term="Non-Consensus Secret" />
-                  </h3>
-                  <p style={styles.body}>{renderText(thiel.non_consensus_secret)}</p>
-
-                  <h3 style={styles.h3}>
-                    Creative Monopoly
-                    <Tooltip term="Creative Monopoly" />
-                  </h3>
-                  <p style={styles.body}>{renderText(thiel.creative_monopoly)}</p>
-
-                  <h3 style={styles.h3}>
-                    Power Law Focus
-                    <Tooltip term="Power Law" />
-                  </h3>
-                  <p style={styles.body}>{renderText(thiel.rebuttal_to_taleb)}</p>
-                </article>
-              )}
-            </section>
-
-            {synthesis && (
-              <section style={styles.synthesisCard}>
+              <article style={{ ...styles.card, borderTop: '4px solid #f43f5e' }}>
                 <div style={styles.cardHeader}>
-                  <h2 style={styles.h2}>Barbell Synthesis</h2>
-                  <span style={{ ...styles.tag, background: '#fef3c7', color: '#92400e' }}>
-                    Thinking OS Verdict
+                  <h2 style={styles.h2}>Nassim Nicholas Taleb</h2>
+                  <span style={{ ...styles.tag, background: '#ffe4e6', color: '#be123c' }}>
+                    Downside &amp; Ruin Audit
                   </span>
                 </div>
 
-                <div style={styles.verdictRow}>
-                  <div>
-                    <p style={styles.muted}>Final Verdict</p>
-                    <p style={{ ...styles.verdict, color: verdictColor }}>{verdict}</p>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <p style={styles.muted}>Confidence Score</p>
-                    <p style={styles.confidence}>
-                      {confidence === null ? '—' : `${confidence}%`}
-                    </p>
-                  </div>
+                <h3 style={styles.h3}>Claim / Downside Audit</h3>
+                <p style={styles.body}>{renderText(talebClaim)}</p>
+
+                <h3 style={styles.h3}>
+                  Absorbing Barrier
+                  <Tooltip term="Absorbing Barrier" />
+                </h3>
+                <p style={styles.body}>{renderText(talebBarrier)}</p>
+
+                <h3 style={styles.h3}>Ruin Risk</h3>
+                <p style={styles.body}>{renderText(talebRuinRisk)}</p>
+
+                <h3 style={styles.h3}>
+                  Via Negativa
+                  <Tooltip term="Via Negativa" />
+                </h3>
+                <FactList items={talebViaNegativa} />
+
+                <h3 style={styles.h3}>
+                  Ergodicity Check
+                  <Tooltip term="Ergodicity" />
+                </h3>
+                <p style={styles.body}>{renderText(talebErgodicity)}</p>
+              </article>
+
+              <article style={{ ...styles.card, borderTop: '4px solid #0ea5e9' }}>
+                <div style={styles.cardHeader}>
+                  <h2 style={styles.h2}>Peter Thiel</h2>
+                  <span style={{ ...styles.tag, background: '#e0f2fe', color: '#0369a1' }}>
+                    Upside &amp; Monopoly Audit
+                  </span>
                 </div>
 
-                <p style={styles.body}>{renderText(synthesis.verdict_reasoning)}</p>
+                <h3 style={styles.h3}>Claim / Upside Audit</h3>
+                <p style={styles.body}>{renderText(thielClaim)}</p>
 
-                {synthesis.confidence_math && (
-                  <p style={styles.math}>Scoring math: {renderText(synthesis.confidence_math)}</p>
-                )}
+                <h3 style={styles.h3}>
+                  0 to 1
+                  <Tooltip term="0 to 1" />
+                </h3>
+                <p style={styles.body}>{renderText(thielZeroToOne)}</p>
 
-                <div style={styles.floorCeilingGrid}>
-                  <div style={styles.floorBox}>
-                    <h3 style={styles.h3}>Taleb Floor — Survival &amp; Kill Criteria</h3>
-                    <FactList items={synthesis.taleb_kill_criteria} />
-                  </div>
-                  <div style={styles.ceilingBox}>
-                    <h3 style={styles.h3}>Thiel Ceiling — Unfair Advantage &amp; 10x Leap</h3>
-                    <p style={styles.body}>{renderText(synthesis.thiel_unfair_advantage)}</p>
-                  </div>
+                <h3 style={styles.h3}>
+                  Non-Consensus Secret
+                  <Tooltip term="Non-Consensus Secret" />
+                </h3>
+                <p style={styles.body}>{renderText(thielSecret)}</p>
+
+                <h3 style={styles.h3}>
+                  Creative Monopoly
+                  <Tooltip term="Creative Monopoly" />
+                </h3>
+                <p style={styles.body}>{renderText(thielMonopoly)}</p>
+
+                <h3 style={styles.h3}>
+                  Power Law Focus
+                  <Tooltip term="Power Law" />
+                </h3>
+                <p style={styles.body}>{renderText(thielPowerLaw)}</p>
+              </article>
+            </section>
+
+            <section style={styles.synthesisCard}>
+              <div style={styles.cardHeader}>
+                <h2 style={styles.h2}>Barbell Synthesis</h2>
+                <span style={{ ...styles.tag, background: '#fef3c7', color: '#92400e' }}>
+                  Thinking OS Verdict
+                </span>
+              </div>
+
+              <div style={styles.verdictRow}>
+                <div>
+                  <p style={styles.muted}>Final Verdict</p>
+                  <p style={{ ...styles.verdict, color: verdictColor }}>{verdict}</p>
                 </div>
+                <div style={{ textAlign: 'right' }}>
+                  <p style={styles.muted}>Confidence Score</p>
+                  <p style={styles.confidence}>{confidence}%</p>
+                </div>
+              </div>
 
-                <h3 style={styles.h3}>3 Immediate Next Actions</h3>
-                <FactList items={synthesis.next_actions} />
+              {verdictReasoning && (
+                <p style={styles.body}>{renderText(verdictReasoning)}</p>
+              )}
 
-                <button
-                  type="button"
-                  onClick={() => setReminderSet(true)}
-                  disabled={reminderSet}
-                  style={{
-                    ...styles.secondaryButton,
-                    opacity: reminderSet ? 0.7 : 1,
-                    cursor: reminderSet ? 'default' : 'pointer'
-                  }}
-                >
-                  {reminderSet ? '✓ 30-Day Check-in Scheduled' : 'Remind me in 30 days'}
-                </button>
-              </section>
-            )}
+              <div style={styles.floorCeilingGrid}>
+                <div style={styles.floorBox}>
+                  <h3 style={styles.h3}>Taleb Floor — Survival &amp; Kill Criteria</h3>
+                  <p style={styles.body}>{renderText(talebFloor)}</p>
+                </div>
+                <div style={styles.ceilingBox}>
+                  <h3 style={styles.h3}>Thiel Ceiling — Unfair Advantage &amp; 10x Leap</h3>
+                  <p style={styles.body}>{renderText(thielCeiling)}</p>
+                </div>
+              </div>
+
+              <h3 style={styles.h3}>3 Immediate Next Actions</h3>
+              <FactList items={nextActions} />
+
+              <button
+                type="button"
+                onClick={() => setReminderSet(true)}
+                disabled={reminderSet}
+                style={{
+                  ...styles.secondaryButton,
+                  opacity: reminderSet ? 0.7 : 1,
+                  cursor: reminderSet ? 'default' : 'pointer'
+                }}
+              >
+                {reminderSet ? '✓ 30-Day Check-in Scheduled' : 'Remind me in 30 days'}
+              </button>
+            </section>
           </>
         )}
 
@@ -682,24 +738,6 @@ const styles = {
     background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
     transition: 'width 0.6s ease'
   },
-  evidencePill: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '6px 12px',
-    borderRadius: 999,
-    background: '#dcfce7',
-    color: '#15803d',
-    fontSize: 13,
-    fontWeight: 600,
-    marginBottom: 16
-  },
-  evidenceDot: {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    background: '#22c55e'
-  },
   verdictRow: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -718,12 +756,6 @@ const styles = {
     margin: 0,
     fontSize: 24,
     fontWeight: 700
-  },
-  math: {
-    margin: '10px 0 0',
-    fontSize: 13,
-    color: '#92400e',
-    fontStyle: 'italic'
   },
   floorCeilingGrid: {
     display: 'grid',
