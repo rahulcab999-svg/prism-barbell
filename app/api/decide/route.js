@@ -5,7 +5,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'deepseek-r1-distill-llama-70b';
+const GROQ_MODEL = 'openai/gpt-oss-120b';
 const GEMINI_MODEL = 'gemini-2.5-flash';
 
 const PLAIN_ENGLISH =
