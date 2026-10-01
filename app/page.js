@@ -1,6 +1,25 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 
+function PrismLogo() {
+  return (
+    <svg width="34" height="34" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ verticalAlign: "middle" }}>
+      {/* Incoming white light beam */}
+      <line x1="2" y1="26" x2="16" y2="20" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" filter="drop-shadow(0 0 2px rgba(0,0,0,0.3))" />
+      {/* Glass triangle prism */}
+      <polygon points="20,8 10,32 30,32" stroke="#1a1a2e" strokeWidth="2.2" fill="#ffffff" fillOpacity="0.85" strokeLinejoin="round" />
+      {/* 7 Refracted rainbow rays */}
+      <line x1="23" y1="19" x2="38" y2="13" stroke="#e63946" strokeWidth="2" strokeLinecap="round" /> {/* Red */}
+      <line x1="23.5" y1="20.5" x2="38" y2="16.5" stroke="#f4a261" strokeWidth="2" strokeLinecap="round" /> {/* Orange */}
+      <line x1="24" y1="22" x2="38" y2="20" stroke="#e9c46a" strokeWidth="2" strokeLinecap="round" /> {/* Yellow */}
+      <line x1="24.5" y1="23.5" x2="38" y2="23.5" stroke="#2a9d8f" strokeWidth="2" strokeLinecap="round" /> {/* Green */}
+      <line x1="25" y1="25" x2="38" y2="27" stroke="#0077b6" strokeWidth="2" strokeLinecap="round" /> {/* Blue */}
+      <line x1="25.5" y1="26.5" x2="38" y2="30.5" stroke="#4a4e69" strokeWidth="2" strokeLinecap="round" /> {/* Indigo */}
+      <line x1="26" y1="28" x2="38" y2="34" stroke="#7209b7" strokeWidth="2" strokeLinecap="round" /> {/* Violet */}
+    </svg>
+  );
+}
+
 export default function Home() {
   const [idea, setIdea] = useState("");
   const [data, setData] = useState(null);
@@ -64,7 +83,11 @@ export default function Home() {
         body: JSON.stringify({ idea }),
       });
       const json = await res.json();
-      setData(json);
+      if (!res.ok || !json.success) {
+        setError(json.error || "Failed to generate decision.");
+        return;
+      }
+      setData(json.data || json);
     } catch (e) {
       setError("Something went wrong. Please try again.");
     } finally {
@@ -729,9 +752,12 @@ export default function Home() {
     <main style={{ minHeight: "100vh", background: "#f0f2f5", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif', padding: "40px 20px" }}>
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 24 }}>
-          <h1 style={{ fontSize: 26, fontWeight: 700, color: "#1a1a2e", margin: 0 }}>
-            Thinking OS <span style={{ color: "#b8860b" }}>v2</span>
-          </h1>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <PrismLogo />
+            <h1 style={{ fontSize: 26, fontWeight: 700, color: "#1a1a2e", margin: 0 }}>
+              Prism <span style={{ color: "#b8860b" }}>Barbell</span>
+            </h1>
+          </div>
           <button
             type="button"
             onClick={() => setView(view === "analysis" ? "journal" : "analysis")}
