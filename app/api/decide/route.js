@@ -5,7 +5,7 @@ import { FRAMEWORKS } from '../../../lib/frameworks.js';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const MODEL = 'gemini-2.0-flash';
+const MODEL = 'gemini-3.8-flash';
 
 const PLAIN_ENGLISH_RULE =
   'STRICT PLAIN-ENGLISH RULE: Write in clear, everyday language a smart non-specialist can read. ' +
