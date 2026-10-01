@@ -7,7 +7,7 @@ const inter = Inter({
 });
 
 export const metadata = {
-  title: 'Thinking OS — Barbell Decision Engine',
+  title: 'Prism — Barbell Decision Engine',
   description:
     'Personal Decision Intelligence grounded in Peter Thiel and Nassim Nicholas Taleb',
 };
