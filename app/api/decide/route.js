@@ -15,6 +15,8 @@ const PLAIN_ENGLISH =
   'MUST be immediately explained in everyday words in the same sentence or the next one. ' +
   'Never leave a loaded term unexplained.';
 
+const NO_MARKDOWN = 'Write plain text only. No asterisks, no bold, no markdown, no backticks.';
+
 function stripFences(text) {
   if (!text) return '';
   return String(text)
@@ -156,6 +158,7 @@ async function runTaleb(question, briefing) {
     'You hunt for absorbing barriers, ruin risk, and path dependence, and you prescribe ' +
     'Via Negativa (removing things rather than adding). ' +
     PLAIN_ENGLISH + ' ' +
+    NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object, no markdown fences, matching this schema: ' +
     '{ "claim": "string", "absorbingBarrier": "string", "viaNegativa": ["string"], "recommendation": "string" }';
 
@@ -164,13 +167,18 @@ async function runTaleb(question, briefing) {
     '"' + question + '"\n\n' +
     'Identify the absorbing barrier (the point of no return where you are wiped out and cannot recover), ' +
     'the ruin risk, path dependence, and produce a concrete Via Negativa list of what to STOP or eliminate. ' +
-    'Give a final recommendation focused on survival first.';
+    'Give a final recommendation focused on survival first. ' +
+    'The \'claim\' field must be one sentence stating your actual finding. Do not restate or paraphrase the question.';
 
   if (briefing && briefing.trim()) {
     user +=
       '\n\nLIVE MARKET BRIEFING:\n' + briefing + '\n\n' +
       'Use the real base rates and failure traps above to define the absorbing barrier and the ruin risk. ' +
-      'Use ONLY facts from the briefing for numbers and names. Write "not in briefing" instead of inventing.';
+      'Use names and numbers ONLY if they appear in the briefing. ' +
+      'If a number is not in the briefing, do not state any number. Describe it in words instead ' +
+      '(for example "a large upfront cost"). ' +
+      'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
+      'say once per section: "Verify this locally."';
   }
 
   const res = await fetch(GROQ_URL, {
@@ -225,6 +233,7 @@ async function runThiel(question, briefing) {
     'You challenge incremental thinking, hunt for the non-consensus secret, test 0-to-1 ' +
     'monopoly differentiation, and evaluate power-law leverage. ' +
     PLAIN_ENGLISH + ' ' +
+    NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object, no markdown fences, matching this schema: ' +
     '{ "claim": "string", "secret": "string", "monopolyAngle": "string", "recommendation": "string" }';
 
@@ -233,14 +242,19 @@ async function runThiel(question, briefing) {
     '"' + question + '"\n\n' +
     'Challenge any incremental 1-to-N thinking. Identify the non-consensus secret (what important ' +
     'truth do few people agree with you on?), the 0-to-1 monopoly differentiation, and the power-law ' +
-    'leverage that could create a 10x breakthrough. Give a final recommendation aimed at asymmetric upside.';
+    'leverage that could create a 10x breakthrough. Give a final recommendation aimed at asymmetric upside. ' +
+    'The \'claim\' field must be one sentence stating your actual finding. Do not restate or paraphrase the question.';
 
   if (briefing && briefing.trim()) {
     user +=
       '\n\nLIVE MARKET BRIEFING:\n' + briefing + '\n\n' +
       'Evaluate the named competitors above and demand a genuine 0-to-1 differentiator, ' +
       'rejecting any incremental copycat. ' +
-      'Use ONLY facts from the briefing for numbers and names. Write "not in briefing" instead of inventing.';
+      'Use names and numbers ONLY if they appear in the briefing. ' +
+      'If a number is not in the briefing, do not state any number. Describe it in words instead ' +
+      '(for example "a large upfront cost"). ' +
+      'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
+      'say once per section: "Verify this locally."';
   }
 
   const response = await ai.models.generateContent({
@@ -285,6 +299,7 @@ async function runSynthesis(question, taleb, thiel, briefing) {
     'upside audit into one final verdict. The barbell = extreme safety on the downside + ' +
     'extreme asymmetry on the upside. ' +
     PLAIN_ENGLISH + ' ' +
+    NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object matching this schema: ' +
     '{ "verdict": "Proceed | Pivot | Abort", "confidence": 0, "killCriteria": "string", ' +
     '"unfairAdvantage": "string", "nextActions": ["string", "string", "string"] }';
@@ -297,7 +312,11 @@ async function runSynthesis(question, taleb, thiel, briefing) {
   if (briefing && briefing.trim()) {
     user += 'LIVE MARKET BRIEFING:\n' + briefing + '\n\n' +
       'Keep the verdict consistent with the real facts above. ' +
-      'Use ONLY facts from the briefing for numbers and names. Write "not in briefing" instead of inventing.\n\n';
+      'Use names and numbers ONLY if they appear in the briefing. ' +
+      'If a number is not in the briefing, do not state any number. Describe it in words instead ' +
+      '(for example "a large upfront cost"). ' +
+      'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
+      'say once per section: "Verify this locally."\n\n';
   }
 
   user +=
@@ -306,7 +325,9 @@ async function runSynthesis(question, taleb, thiel, briefing) {
     'add up to +25 for upside asymmetry, add up to +15 for a clear non-consensus secret, ' +
     'subtract up to -40 for absorbing-barrier / ruin proximity, then clamp to 0-100.\n' +
     'Provide: verdict (Proceed / Pivot / Abort), confidence (integer 0-100), ' +
-    'killCriteria (exactly when to pull the plug — the Taleb Floor), ' +
+    'killCriteria (2 to 3 concrete, checkable triggers: what to observe and when to stop. ' +
+    'Percentages and time limits are allowed ONLY if they come from the briefing. Otherwise write ' +
+    'them as "set your own limit before starting: [what to measure]"), ' +
     'unfairAdvantage (Thiel Ceiling — the durable edge and 10x breakthrough), ' +
     'and exactly 3 immediate next actions.';
 
