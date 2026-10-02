@@ -155,6 +155,77 @@ export default function Home() {
     );
   }
 
+  function renderGroundingText(text) {
+    if (!text || typeof text !== "string") return null;
+    const lines = text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    const items = [];
+    lines.forEach((raw) => {
+      const hasBullet = /^\s*[*\-•]\s+/.test(raw);
+      if (!hasBullet && /^here are/i.test(raw)) return;
+      const line = raw.replace(/\*\*/g, "").replace(/__/g, "");
+      const endsWithColon = line.endsWith(":") && line.length < 80 && !hasBullet;
+      const isHeading =
+        line.startsWith("#") ||
+        /^\(?[a-cA-C]\)\s/.test(line) ||
+        endsWithColon;
+      if (isHeading) {
+        let h = line.replace(/^#+\s*/, "").replace(/^\(?[a-cA-C]\)\s*/, "").trim();
+        if (h) items.push({ type: "heading", text: h });
+      } else {
+        let b = line.replace(/^\s*[*\-•]\s+/, "").trim();
+        if (b) items.push({ type: "bullet", text: b });
+      }
+    });
+    if (items.length === 0) return null;
+    let headingIndex = -1;
+    return (
+      <>
+        {items.map((item, i) => {
+          if (item.type === "heading") {
+            headingIndex++;
+            const isFirst = headingIndex === 0;
+            return (
+              <div
+                key={i}
+                style={{
+                  fontSize: 12,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
+                  fontWeight: 700,
+                  color: "#b8860b",
+                  marginTop: isFirst ? 0 : 18,
+                  marginBottom: 8,
+                  borderBottom: "1px solid #e8dcc0",
+                  paddingBottom: 6,
+                }}
+              >
+                {item.text}
+              </div>
+            );
+          }
+          return (
+            <div
+              key={i}
+              style={{
+                fontSize: 15,
+                fontWeight: 400,
+                color: "#1a1a2e",
+                lineHeight: 1.6,
+                marginBottom: 6,
+              }}
+            >
+              <span style={{ marginRight: 8, color: "#b8860b" }}>•</span>
+              {item.text}
+            </div>
+          );
+        })}
+      </>
+    );
+  }
+
   function getTalebContent(t) {
     if (!t) return { main: "", barrier: "", viaNegativa: null, extras: [] };
     if (typeof t === "string") return { main: t, barrier: "", viaNegativa: null, extras: [] };
@@ -821,7 +892,7 @@ export default function Home() {
                     </button>
                     {groundingOpen && (
                       <div style={cardStyle}>
-                        <div style={bodyStyle}>{grounding.summary}</div>
+                        <div>{renderGroundingText(grounding?.summary)}</div>
                         {grounding?.sources && grounding.sources.length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
                             {grounding.sources.map((s, i) => {
