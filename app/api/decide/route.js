@@ -52,32 +52,41 @@ async function runGrounding(question) {
     const prompt =
       'Search the web for real, current facts relevant to this decision:\n\n' +
       '"' + question + '"\n\n' +
-      'Find: (a) the current landscape with named, active competitors or alternatives, ' +
-      '(b) empirical base rates (failure rates, typical runway, customer acquisition cost or dynamics, with numbers where they exist), ' +
-      '(c) known industry traps and structural failure modes. ' +
-      'If the question is personal or career-related, search for the equivalent real-world base rates and common failure patterns for that kind of decision. ' +
-      'Max about 250 words, plain bullets, no markdown headers. ' +
-      'Say "no reliable data found" for anything you cannot verify. Never invent numbers.';
+      'Return EXACTLY this structure, with no intro sentence and no closing sentence:\n' +
+      '## Competitors and alternatives\n' +
+      '- bullet\n' +
+      '- bullet\n' +
+      '## Base rates\n' +
+      '- bullet\n' +
+      '## Industry traps\n' +
+      '- bullet\n\n' +
+      'Rules: each bullet is one short plain sentence. No bold, no asterisks, no nested bullets, ' +
+      'no "(a)/(b)/(c)" labels, no markdown other than the "## " heading lines and "- " bullets. ' +
+      'Max about 250 words. ' +
+      'Say "no reliable data found" when you cannot verify something. Never invent numbers.';
 
     const timeoutPromise = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error('Grounding timeout')), 20000);
+      timer = setTimeout(() => reject(new Error('Grounding timeout')), 35000);
     });
 
-    const response = await Promise.race([
-      ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          temperature: 0.2
-        }
-      }),
-      timeoutPromise
-    ]);
-
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
+    let response;
+    try {
+      response = await Promise.race([
+        ai.models.generateContent({
+          model: GEMINI_MODEL,
+          contents: prompt,
+          config: {
+            tools: [{ googleSearch: {} }],
+            temperature: 0.2
+          }
+        }),
+        timeoutPromise
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
     }
 
     const text =
@@ -130,7 +139,10 @@ async function runGrounding(question) {
 
     return { summary, sources };
   } catch (_) {
-    if (timer) clearTimeout(timer);
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
     return { summary: '', sources: [] };
   }
 }
