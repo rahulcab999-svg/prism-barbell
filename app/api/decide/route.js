@@ -1,8 +1,10 @@
+// app/api/decide/route.js
 import { NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = 'openai/gpt-oss-120b';
@@ -40,7 +42,101 @@ function extractJson(text) {
   }
 }
 
-async function runTaleb(question) {
+async function runGrounding(question) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return { summary: '', sources: [] };
+
+  let timer = null;
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+
+    const prompt =
+      'Search the web for real, current facts relevant to this decision:\n\n' +
+      '"' + question + '"\n\n' +
+      'Find: (a) the current landscape with named, active competitors or alternatives, ' +
+      '(b) empirical base rates (failure rates, typical runway, customer acquisition cost or dynamics, with numbers where they exist), ' +
+      '(c) known industry traps and structural failure modes. ' +
+      'If the question is personal or career-related, search for the equivalent real-world base rates and common failure patterns for that kind of decision. ' +
+      'Max about 250 words, plain bullets, no markdown headers. ' +
+      'Say "no reliable data found" for anything you cannot verify. Never invent numbers.';
+
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Grounding timeout')), 20000);
+    });
+
+    const response = await Promise.race([
+      ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          temperature: 0.2
+        }
+      }),
+      timeoutPromise
+    ]);
+
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+
+    const text =
+      (response && response.text) ||
+      (response &&
+        response.candidates &&
+        response.candidates[0] &&
+        response.candidates[0].content &&
+        response.candidates[0].content.parts &&
+        response.candidates[0].content.parts.map((p) => p.text || '').join('')) ||
+      '';
+
+    const summary = text ? String(text).trim() : '';
+    if (!summary) return { summary: '', sources: [] };
+
+    let sources = [];
+    try {
+      const chunks =
+        response &&
+        response.candidates &&
+        response.candidates[0] &&
+        response.candidates[0].groundingMetadata &&
+        response.candidates[0].groundingMetadata.groundingChunks;
+
+      if (Array.isArray(chunks)) {
+        const seen = new Set();
+        const out = [];
+        for (const chunk of chunks) {
+          if (out.length >= 6) break;
+          if (!chunk || !chunk.web) continue;
+          const uri = chunk.web.uri;
+          if (!uri) continue;
+          if (seen.has(uri)) continue;
+          seen.add(uri);
+          let title = chunk.web.title;
+          if (!title) {
+            try {
+              title = new URL(uri).hostname;
+            } catch (_) {
+              title = uri;
+            }
+          }
+          out.push({ title, uri });
+        }
+        sources = out;
+      }
+    } catch (_) {
+      sources = [];
+    }
+
+    return { summary, sources };
+  } catch (_) {
+    if (timer) clearTimeout(timer);
+    return { summary: '', sources: [] };
+  }
+}
+
+async function runTaleb(question, briefing) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error('GROQ_API_KEY is not set.');
 
@@ -52,12 +148,19 @@ async function runTaleb(question) {
     'Return ONLY a valid JSON object, no markdown fences, matching this schema: ' +
     '{ "claim": "string", "absorbingBarrier": "string", "viaNegativa": ["string"], "recommendation": "string" }';
 
-  const user =
+  let user =
     'Audit this decision strictly for downside and ruin risk:\n\n' +
     '"' + question + '"\n\n' +
     'Identify the absorbing barrier (the point of no return where you are wiped out and cannot recover), ' +
     'the ruin risk, path dependence, and produce a concrete Via Negativa list of what to STOP or eliminate. ' +
     'Give a final recommendation focused on survival first.';
+
+  if (briefing && briefing.trim()) {
+    user +=
+      '\n\nLIVE MARKET BRIEFING:\n' + briefing + '\n\n' +
+      'Use the real base rates and failure traps above to define the absorbing barrier and the ruin risk. ' +
+      'Use ONLY facts from the briefing for numbers and names. Write "not in briefing" instead of inventing.';
+  }
 
   const res = await fetch(GROQ_URL, {
     method: 'POST',
@@ -100,7 +203,7 @@ async function runTaleb(question) {
   };
 }
 
-async function runThiel(question) {
+async function runThiel(question, briefing) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set.');
 
@@ -114,12 +217,20 @@ async function runThiel(question) {
     'Return ONLY a valid JSON object, no markdown fences, matching this schema: ' +
     '{ "claim": "string", "secret": "string", "monopolyAngle": "string", "recommendation": "string" }';
 
-  const user =
+  let user =
     'Audit this decision for upside, asymmetry, and monopoly potential:\n\n' +
     '"' + question + '"\n\n' +
     'Challenge any incremental 1-to-N thinking. Identify the non-consensus secret (what important ' +
     'truth do few people agree with you on?), the 0-to-1 monopoly differentiation, and the power-law ' +
     'leverage that could create a 10x breakthrough. Give a final recommendation aimed at asymmetric upside.';
+
+  if (briefing && briefing.trim()) {
+    user +=
+      '\n\nLIVE MARKET BRIEFING:\n' + briefing + '\n\n' +
+      'Evaluate the named competitors above and demand a genuine 0-to-1 differentiator, ' +
+      'rejecting any incremental copycat. ' +
+      'Use ONLY facts from the briefing for numbers and names. Write "not in briefing" instead of inventing.';
+  }
 
   const response = await ai.models.generateContent({
     model: GEMINI_MODEL,
@@ -152,7 +263,7 @@ async function runThiel(question) {
   };
 }
 
-async function runSynthesis(question, taleb, thiel) {
+async function runSynthesis(question, taleb, thiel, briefing) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set.');
 
@@ -167,10 +278,18 @@ async function runSynthesis(question, taleb, thiel) {
     '{ "verdict": "Proceed | Pivot | Abort", "confidence": 0, "killCriteria": "string", ' +
     '"unfairAdvantage": "string", "nextActions": ["string", "string", "string"] }';
 
-  const user =
+  let user =
     'DECISION:\n"' + question + '"\n\n' +
     'TALEB DOWNSIDE AUDIT:\n' + JSON.stringify(taleb) + '\n\n' +
-    'THIEL UPSIDE AUDIT:\n' + JSON.stringify(thiel) + '\n\n' +
+    'THIEL UPSIDE AUDIT:\n' + JSON.stringify(thiel) + '\n\n';
+
+  if (briefing && briefing.trim()) {
+    user += 'LIVE MARKET BRIEFING:\n' + briefing + '\n\n' +
+      'Keep the verdict consistent with the real facts above. ' +
+      'Use ONLY facts from the briefing for numbers and names. Write "not in briefing" instead of inventing.\n\n';
+  }
+
+  user +=
     'Synthesize these into a Barbell Synthesis.\n' +
     'Compute the confidence score MECHANICALLY (not vibes): start at 50, ' +
     'add up to +25 for upside asymmetry, add up to +15 for a clear non-consensus secret, ' +
@@ -244,12 +363,15 @@ export async function POST(request) {
       );
     }
 
+    const grounding = await runGrounding(question);
+    const briefing = grounding && grounding.summary ? grounding.summary : '';
+
     const [talebResult, thielResult] = await Promise.all([
-      runTaleb(question),
-      runThiel(question)
+      runTaleb(question, briefing),
+      runThiel(question, briefing)
     ]);
 
-    const synthesis = await runSynthesis(question, talebResult, thielResult);
+    const synthesis = await runSynthesis(question, talebResult, thielResult, briefing);
 
     return NextResponse.json(
       {
@@ -257,7 +379,11 @@ export async function POST(request) {
         data: {
           taleb: talebResult,
           thiel: thielResult,
-          synthesis
+          synthesis,
+          grounding: {
+            summary: grounding && grounding.summary ? grounding.summary : '',
+            sources: grounding && Array.isArray(grounding.sources) ? grounding.sources : []
+          }
         }
       },
       { status: 200 }
