@@ -101,22 +101,32 @@ export default function Home() {
     }
   }
 
+  function cleanText(s) {
+    if (typeof s !== "string") return s;
+    return s
+      .replace(/\*\*/g, "")
+      .replace(/__/g, "")
+      .replace(/\*+([^*\n]+)\*+/g, "$1")
+      .replace(/`/g, "")
+      .replace(/\(not in briefing\)/gi, "(unverified)");
+  }
+
   function renderText(value) {
     if (value === null || value === undefined) return "";
-    if (typeof value === "string") return value;
+    if (typeof value === "string") return cleanText(value);
     if (typeof value === "number" || typeof value === "boolean") return String(value);
     if (Array.isArray(value)) {
       return value
-        .map((v) => (typeof v === "string" ? v : JSON.stringify(v)))
+        .map((v) => (typeof v === "string" ? cleanText(v) : JSON.stringify(v)))
         .join("\n");
     }
     if (typeof value === "object") {
       return Object.entries(value)
         .map(([k, v]) => {
           const label = k.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
-          if (Array.isArray(v)) return `${label}: ${v.join("; ")}`;
+          if (Array.isArray(v)) return `${label}: ${v.map((x) => (typeof x === "string" ? cleanText(x) : x)).join("; ")}`;
           if (v && typeof v === "object") return `${label}: ${JSON.stringify(v)}`;
-          return `${label}: ${v}`;
+          return `${label}: ${typeof v === "string" ? cleanText(v) : v}`;
         })
         .join("\n");
     }
@@ -131,13 +141,13 @@ export default function Home() {
           {value.map((item, i) => (
             <li key={i} style={{ marginBottom: 6 }}>
               <span style={{ marginRight: 8, color: "#b8860b" }}>•</span>
-              {typeof item === "string" ? item : renderText(item)}
+              {typeof item === "string" ? cleanText(item) : renderText(item)}
             </li>
           ))}
         </ul>
       );
     }
-    if (typeof value === "string") return <p style={{ margin: "8px 0 0 0" }}>{value}</p>;
+    if (typeof value === "string") return <p style={{ margin: "8px 0 0 0" }}>{cleanText(value)}</p>;
     return <p style={{ margin: "8px 0 0 0" }}>{renderText(value)}</p>;
   }
 
@@ -148,7 +158,7 @@ export default function Home() {
       <ol style={{ margin: "8px 0 0 0", paddingLeft: 20 }}>
         {items.map((item, i) => (
           <li key={i} style={{ marginBottom: 6 }}>
-            {typeof item === "string" ? item : renderText(item)}
+            {typeof item === "string" ? cleanText(item) : renderText(item)}
           </li>
         ))}
       </ol>
