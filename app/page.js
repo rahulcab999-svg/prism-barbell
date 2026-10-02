@@ -27,6 +27,9 @@ export default function Home() {
   const [error, setError] = useState("");
   const [view, setView] = useState("analysis");
 
+  const [grounding, setGrounding] = useState({ summary: "", sources: [] });
+  const [groundingOpen, setGroundingOpen] = useState(false);
+
   const [hydrated, setHydrated] = useState(false);
   const [journal, setJournal] = useState([]);
 
@@ -68,6 +71,8 @@ export default function Home() {
     setLoading(true);
     setError("");
     setData(null);
+    setGrounding({ summary: "", sources: [] });
+    setGroundingOpen(false);
     setSavedId(null);
     setEmotionalState("");
     setInvalidationTrigger("");
@@ -88,6 +93,7 @@ export default function Home() {
         return;
       }
       setData(json.data || json);
+      setGrounding(json?.data?.grounding ?? { summary: "", sources: [] });
     } catch (e) {
       setError("Something went wrong. Please try again.");
     } finally {
@@ -787,11 +793,70 @@ export default function Home() {
                 disabled={loading}
                 style={{ padding: "14px 28px", fontSize: 16, fontWeight: 600, color: "#fff", background: loading ? "#c9b98a" : "#b8860b", border: "none", borderRadius: 10, cursor: loading ? "not-allowed" : "pointer" }}
               >
-                {loading ? "Thinking..." : "Decide"}
+                {loading ? "Scanning live market data..." : "Decide"}
               </button>
             </div>
 
             {error && <div style={{ color: "#b00020", marginBottom: 24 }}>{error}</div>}
+
+            {data && (
+              <div style={{ marginBottom: 20 }}>
+                {grounding?.summary ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setGroundingOpen((v) => !v)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "#b8860b",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        padding: 0,
+                        marginBottom: 10,
+                      }}
+                    >
+                      {groundingOpen ? "▾" : "▸"} ✓ Grounded with real-time market data
+                    </button>
+                    {groundingOpen && (
+                      <div style={cardStyle}>
+                        <div style={bodyStyle}>{grounding.summary}</div>
+                        {grounding?.sources && grounding.sources.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+                            {grounding.sources.map((s, i) => {
+                              const title = s?.title || s?.uri || "";
+                              const short = title.length > 40 ? title.slice(0, 40) + "…" : title;
+                              return (
+                                <a
+                                  key={i}
+                                  href={s?.uri}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    padding: "6px 14px",
+                                    borderRadius: 999,
+                                    border: "1px solid #e0dccf",
+                                    background: "#fff",
+                                    color: "#1a1a2e",
+                                    fontSize: 13,
+                                    textDecoration: "none",
+                                  }}
+                                >
+                                  {short}
+                                </a>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div style={{ color: "#8a7f6a", fontSize: 13 }}>Ungrounded: live data unavailable</div>
+                )}
+              </div>
+            )}
 
             {data && (
               <>
