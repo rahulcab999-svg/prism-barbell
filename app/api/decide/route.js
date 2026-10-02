@@ -1,4 +1,4 @@
-// app/api/decide/route.js
+
 import { NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 
