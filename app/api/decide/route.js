@@ -10,10 +10,11 @@ const GROQ_MODEL = 'openai/gpt-oss-120b';
 const GEMINI_MODEL = 'gemini-2.5-flash';
 
 const PLAIN_ENGLISH =
-  'PLAIN-ENGLISH RULE: Write for a smart non-specialist. Every technical or conceptual term ' +
+  'PLAIN-ENGLISH RULE: Write for a smart non-specialist. The FIRST time a technical or conceptual term ' +
   '(e.g. "absorbing barrier", "via negativa", "ergodicity", "0 to 1", "power law", "monopoly") ' +
-  'MUST be immediately explained in everyday words in the same sentence or the next one. ' +
-  'Never leave a loaded term unexplained.';
+  'appears in your answer, explain it immediately in everyday words in the same sentence or the next one. ' +
+  'After that first explanation, use the term alone. Never repeat the definition inside later bullets, ' +
+  'actions or recommendations, and never append "- <term> means ..." or similar explanations to list items.';
 
 const NO_MARKDOWN = 'Write plain text only. No asterisks, no bold, no markdown, no backticks.';
 
@@ -178,7 +179,8 @@ async function runTaleb(question, briefing) {
       'If a number is not in the briefing, do not state any number. Describe it in words instead ' +
       '(for example "a large upfront cost"). ' +
       'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
-      'say once per section: "Verify this locally."';
+      'you may say "Verify this locally." at most once per field, and only as the LAST sentence ' +
+      'of that field, never at the start. Do not use it in nextActions.';
   }
 
   const res = await fetch(GROQ_URL, {
@@ -254,7 +256,8 @@ async function runThiel(question, briefing) {
       'If a number is not in the briefing, do not state any number. Describe it in words instead ' +
       '(for example "a large upfront cost"). ' +
       'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
-      'say once per section: "Verify this locally."';
+      'you may say "Verify this locally." at most once per field, and only as the LAST sentence ' +
+      'of that field, never at the start. Do not use it in nextActions.';
   }
 
   const response = await ai.models.generateContent({
@@ -316,7 +319,8 @@ async function runSynthesis(question, taleb, thiel, briefing) {
       'If a number is not in the briefing, do not state any number. Describe it in words instead ' +
       '(for example "a large upfront cost"). ' +
       'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
-      'say once per section: "Verify this locally."\n\n';
+      'you may say "Verify this locally." at most once per field, and only as the LAST sentence ' +
+      'of that field, never at the start. Do not use it in nextActions.\n\n';
   }
 
   user +=
@@ -326,8 +330,8 @@ async function runSynthesis(question, taleb, thiel, briefing) {
     'subtract up to -40 for absorbing-barrier / ruin proximity, then clamp to 0-100.\n' +
     'Provide: verdict (Proceed / Pivot / Abort), confidence (integer 0-100), ' +
     'killCriteria (2 to 3 concrete, checkable triggers: what to observe and when to stop. ' +
-    'Percentages and time limits are allowed ONLY if they come from the briefing. Otherwise write ' +
-    'them as "set your own limit before starting: [what to measure]"), ' +
+    'Numbers, percentages AND time periods (months, weeks) are allowed ONLY if they come from the briefing. ' +
+    'Otherwise write "set your own deadline before starting" or "set your own limit: [what to measure]"), ' +
     'unfairAdvantage (Thiel Ceiling — the durable edge and 10x breakthrough), ' +
     'and exactly 3 immediate next actions.';
 
