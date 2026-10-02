@@ -259,16 +259,17 @@ export default function Home() {
   }
 
   function getSynthesisContent(s) {
-    if (!s) return { verdict: "Proceed", rationale: "", killCriteria: "", unfairAdvantage: "", nextActions: [], extras: [] };
-    if (typeof s === "string") return { verdict: "Proceed", rationale: s, killCriteria: "", unfairAdvantage: "", nextActions: [], extras: [] };
+    if (!s) return { verdict: "Proceed", rationale: "", killCriteria: "", unfairAdvantage: "", nextActions: [], confidence: 0, extras: [] };
+    if (typeof s === "string") return { verdict: "Proceed", rationale: s, killCriteria: "", unfairAdvantage: "", nextActions: [], confidence: 0, extras: [] };
     const verdict = s.verdict || "Proceed";
     const rationale = s.summary || s.rationale || s.why || s.reasoning || "";
     const killCriteria = s.killCriteria || s.talebFloor || s.survival || s.floor || "";
     const unfairAdvantage = s.unfairAdvantage || s.thielCeiling || s.ceiling || s.tenX || "";
     const nextActions = s.nextActions || s.actions || s.steps || [];
-    const used = new Set(["verdict","summary","rationale","why","reasoning","killCriteria","talebFloor","survival","floor","unfairAdvantage","thielCeiling","ceiling","tenX","nextActions","actions","steps"]);
+    const confidence = num(s.confidence);
+    const used = new Set(["verdict","summary","rationale","why","reasoning","killCriteria","talebFloor","survival","floor","unfairAdvantage","thielCeiling","ceiling","tenX","nextActions","actions","steps","confidence"]);
     const extras = Object.entries(s).filter(([k, v]) => !used.has(k) && v !== null && v !== undefined && v !== "");
-    return { verdict, rationale, killCriteria, unfairAdvantage, nextActions, extras };
+    return { verdict, rationale, killCriteria, unfairAdvantage, nextActions, confidence, extras };
   }
 
   const taleb = getTalebContent(data?.taleb);
@@ -1001,7 +1002,13 @@ export default function Home() {
 
                 <div style={{ background: "#fffdf5", border: "1px solid #e8dcc0", borderRadius: 16, padding: "32px 36px", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                   <div style={labelStyle}>Barbell Synthesis</div>
-                  <div style={{ fontSize: 24, fontWeight: 700, color: "#b8860b", marginBottom: 20 }}>{synthesis.verdict}</div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: "#b8860b" }}>{synthesis.verdict}</div>
+                    <div style={{ fontSize: 13, color: "#5a5142" }}>Confidence {num(synthesis.confidence)}%</div>
+                  </div>
+                  <div style={{ height: 4, background: "#eee", borderRadius: 2, marginBottom: 20, overflow: "hidden", maxWidth: 320 }}>
+                    <div style={{ width: `${num(synthesis.confidence)}%`, height: "100%", background: "#b8860b", transition: "width 200ms" }} />
+                  </div>
                   <div style={bodyStyle}>
                     {synthesis.rationale && (
                       <>
