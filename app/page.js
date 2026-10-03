@@ -304,6 +304,35 @@ export default function Home() {
     return String(value);
   }
 
+  function splitNumbered(text) {
+    if (typeof text !== "string") return null;
+    const cleaned = cleanText(text);
+    const re = /(?:^|\s)(\d+)\.\s+(?=[A-Z"'(\[])/g;
+    const matches = [];
+    let m;
+    while ((m = re.exec(cleaned)) !== null) {
+      matches.push({ num: Number(m[1]), start: m.index, end: m.index + m[0].length });
+    }
+    if (matches.length < 2) return null;
+    let sequential = true;
+    for (let i = 1; i < matches.length; i++) {
+      if (matches[i].num !== matches[i - 1].num + 1) {
+        sequential = false;
+        break;
+      }
+    }
+    if (!sequential) return null;
+    const items = [];
+    for (let i = 0; i < matches.length; i++) {
+      const start = matches[i].end;
+      const end = i + 1 < matches.length ? matches[i + 1].start : cleaned.length;
+      const piece = cleaned.slice(start, end).trim();
+      if (piece) items.push(piece);
+    }
+    if (items.length < 2) return null;
+    return items;
+  }
+
   function renderBullets(value) {
     if (!value) return null;
     if (Array.isArray(value)) {
@@ -318,7 +347,11 @@ export default function Home() {
         </ul>
       );
     }
-    if (typeof value === "string") return <p style={{ margin: "8px 0 0 0" }}>{cleanText(value)}</p>;
+    if (typeof value === "string") {
+      const split = splitNumbered(value);
+      if (split) return renderNumbered(split);
+      return <p style={{ margin: "8px 0 0 0" }}>{cleanText(value)}</p>;
+    }
     return <p style={{ margin: "8px 0 0 0" }}>{renderText(value)}</p>;
   }
 
@@ -1007,6 +1040,16 @@ export default function Home() {
   const counts = calcOutcomeCounts(journal);
   const reviewedCount = journal.filter((e) => e.review).length;
 
+  const verdictLower = String(synthesis.verdict || "").toLowerCase();
+  const verdictMeaning =
+    verdictLower === "proceed"
+      ? "Go ahead, but stop if a kill criterion is hit."
+      : verdictLower === "pivot"
+      ? "Change the plan before you commit. The current version is too risky or too weak."
+      : verdictLower === "abort"
+      ? "Do not do this as planned. The risk of ruin is too high."
+      : "";
+
   return (
     <main style={{ minHeight: "100vh", background: "#f0f2f5", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif', padding: "40px 20px" }}>
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -1329,6 +1372,11 @@ export default function Home() {
                     <div style={{ fontSize: 24, fontWeight: 700, color: "#b8860b" }}>{synthesis.verdict}</div>
                     <div style={{ fontSize: 13, color: "#5a5142" }}>Confidence {num(synthesis.confidence)}%</div>
                   </div>
+                  {verdictMeaning && (
+                    <div style={{ fontSize: 13, color: "#5a5142", marginBottom: 16 }}>
+                      {verdictMeaning}
+                    </div>
+                  )}
                   <div style={{ height: 4, background: "#eee", borderRadius: 2, marginBottom: 20, overflow: "hidden", maxWidth: 320 }}>
                     <div style={{ width: `${num(synthesis.confidence)}%`, height: "100%", background: "#b8860b", transition: "width 200ms" }} />
                   </div>
@@ -1342,7 +1390,12 @@ export default function Home() {
                     {synthesis.killCriteria && (
                       <>
                         <div style={subLabelStyle}>Taleb Floor — Survival / Kill Criteria</div>
-                        <p style={{ margin: 0 }}>{renderText(synthesis.killCriteria)}</p>
+                        {(() => {
+                          const kc = renderText(synthesis.killCriteria);
+                          const split = splitNumbered(kc);
+                          if (split) return renderNumbered(split);
+                          return <p style={{ margin: 0 }}>{kc}</p>;
+                        })()}
                       </>
                     )}
                     {synthesis.unfairAdvantage && (
