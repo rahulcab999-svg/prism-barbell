@@ -44,11 +44,75 @@ function extractJson(text) {
   }
 }
 
+async function callGeminiWithFallback({ models, build }) {
+  let lastError = null;
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    try {
+      const result = await build(model);
+      return { result, model };
+    } catch (error) {
+      lastError = error;
+      const msg = error && error.message ? String(error.message) : '';
+      const is429 =
+        msg.includes('429') ||
+        /RESOURCE_EXHAUSTED/i.test(msg) ||
+        /quota/i.test(msg) ||
+        /rate limit/i.test(msg);
+      const is503 = msg.includes('503');
+      if (is429 || is503) {
+        console.error('[fallback]', model, is429 ? '429' : '503');
+        if (is503) {
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError || new Error('All providers failed.');
+}
+
+async function callGroqText(user, system, temperature) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error('GROQ_API_KEY is not set.');
+  const res = await fetch(GROQ_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      temperature,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user }
+      ]
+    })
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Groq failed (${res.status}): ${errText.slice(0, 300)}`);
+  }
+  const payload = await res.json();
+  return (
+    (payload &&
+      payload.choices &&
+      payload.choices[0] &&
+      payload.choices[0].message &&
+      payload.choices[0].message.content) ||
+    ''
+  );
+}
+
 async function runGrounding(question) {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return { summary: '', sources: [] };
+  if (!apiKey) {
+    return { summary: '', sources: [], reason: 'GEMINI_API_KEY is not set.', model: 'none' };
+  }
 
-  let timer = null;
   try {
     const ai = new GoogleGenAI({ apiKey });
 
@@ -68,29 +132,30 @@ async function runGrounding(question) {
       'Max about 250 words. ' +
       'Say "no reliable data found" when you cannot verify something. Never invent numbers.';
 
-    const timeoutPromise = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error('Grounding timeout')), 35000);
-    });
-
-    let response;
-    try {
-      response = await Promise.race([
-        ai.models.generateContent({
-          model: GEMINI_MODEL,
-          contents: prompt,
-          config: {
-            tools: [{ googleSearch: {} }],
-            temperature: 0.2
-          }
-        }),
-        timeoutPromise
-      ]);
-    } finally {
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
+    const { result: response, model } = await callGeminiWithFallback({
+      models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+      build: async (modelName) => {
+        let localTimer = null;
+        const timeoutPromise = new Promise((_, reject) => {
+          localTimer = setTimeout(() => reject(new Error('Grounding timeout')), 35000);
+        });
+        try {
+          return await Promise.race([
+            ai.models.generateContent({
+              model: modelName,
+              contents: prompt,
+              config: {
+                tools: [{ googleSearch: {} }],
+                temperature: 0.2
+              }
+            }),
+            timeoutPromise
+          ]);
+        } finally {
+          if (localTimer) clearTimeout(localTimer);
+        }
       }
-    }
+    });
 
     const text =
       (response && response.text) ||
@@ -103,7 +168,9 @@ async function runGrounding(question) {
       '';
 
     const summary = text ? String(text).trim() : '';
-    if (!summary) return { summary: '', sources: [] };
+    if (!summary) {
+      return { summary: '', sources: [], reason: 'Empty grounding output.', model };
+    }
 
     let sources = [];
     try {
@@ -140,13 +207,9 @@ async function runGrounding(question) {
       sources = [];
     }
 
-    return { summary, sources };
+    return { summary, sources, model };
   } catch (_) {
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
-    }
-    return { summary: '', sources: [] };
+    return { summary: '', sources: [], reason: 'Grounding failed.', model: 'none' };
   }
 }
 
@@ -260,35 +323,44 @@ async function runThiel(question, briefing) {
       'of that field, never at the start. Do not use it in nextActions.';
   }
 
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: user,
-    config: {
-      systemInstruction: system,
-      temperature: 0.7,
-      responseMimeType: 'application/json'
+  const { result, model } = await callGeminiWithFallback({
+    models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'groq'],
+    build: async (modelName) => {
+      let text = '';
+      if (modelName === 'groq') {
+        text = await callGroqText(user, system, 0.7);
+      } else {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: user,
+          config: {
+            systemInstruction: system,
+            temperature: 0.7,
+            responseMimeType: 'application/json'
+          }
+        });
+        text =
+          (response && response.text) ||
+          (response &&
+            response.candidates &&
+            response.candidates[0] &&
+            response.candidates[0].content &&
+            response.candidates[0].content.parts &&
+            response.candidates[0].content.parts.map((p) => p.text || '').join('')) ||
+          '';
+      }
+      const parsed = extractJson(text);
+      if (!parsed) throw new Error('Thiel brain returned non-JSON content.');
+      return {
+        claim: parsed.claim || '',
+        secret: parsed.secret || '',
+        monopolyAngle: parsed.monopolyAngle || '',
+        recommendation: parsed.recommendation || ''
+      };
     }
   });
 
-  const text =
-    (response && response.text) ||
-    (response &&
-      response.candidates &&
-      response.candidates[0] &&
-      response.candidates[0].content &&
-      response.candidates[0].content.parts &&
-      response.candidates[0].content.parts.map((p) => p.text || '').join('')) ||
-    '';
-
-  const parsed = extractJson(text);
-  if (!parsed) throw new Error('Thiel brain returned non-JSON content.');
-
-  return {
-    claim: parsed.claim || '',
-    secret: parsed.secret || '',
-    monopolyAngle: parsed.monopolyAngle || '',
-    recommendation: parsed.recommendation || ''
-  };
+  return { result, model };
 }
 
 async function runSynthesis(question, taleb, thiel, briefing) {
@@ -335,44 +407,54 @@ async function runSynthesis(question, taleb, thiel, briefing) {
     'unfairAdvantage (Thiel Ceiling — the durable edge and 10x breakthrough), ' +
     'and exactly 3 immediate next actions.';
 
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: user,
-    config: {
-      systemInstruction: system,
-      temperature: 0.5,
-      responseMimeType: 'application/json'
+  const { result, model } = await callGeminiWithFallback({
+    models: ['gemini-2.5-flash', 'groq'],
+    build: async (modelName) => {
+      let text = '';
+      if (modelName === 'groq') {
+        text = await callGroqText(user, system, 0.5);
+      } else {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: user,
+          config: {
+            systemInstruction: system,
+            temperature: 0.5,
+            responseMimeType: 'application/json'
+          }
+        });
+        text =
+          (response && response.text) ||
+          (response &&
+            response.candidates &&
+            response.candidates[0] &&
+            response.candidates[0].content &&
+            response.candidates[0].content.parts &&
+            response.candidates[0].content.parts.map((p) => p.text || '').join('')) ||
+          '';
+      }
+      const parsed = extractJson(text);
+      if (!parsed) throw new Error('Synthesis brain returned non-JSON content.');
+
+      let confidence = Number(parsed.confidence);
+      if (!Number.isFinite(confidence)) confidence = 50;
+      confidence = Math.max(0, Math.min(100, Math.round(confidence)));
+
+      const actions = Array.isArray(parsed.nextActions)
+        ? parsed.nextActions.filter(Boolean).slice(0, 3)
+        : [];
+
+      return {
+        verdict: parsed.verdict || 'Pivot',
+        confidence,
+        killCriteria: parsed.killCriteria || '',
+        unfairAdvantage: parsed.unfairAdvantage || '',
+        nextActions: actions
+      };
     }
   });
 
-  const text =
-    (response && response.text) ||
-    (response &&
-      response.candidates &&
-      response.candidates[0] &&
-      response.candidates[0].content &&
-      response.candidates[0].content.parts &&
-      response.candidates[0].content.parts.map((p) => p.text || '').join('')) ||
-    '';
-
-  const parsed = extractJson(text);
-  if (!parsed) throw new Error('Synthesis brain returned non-JSON content.');
-
-  let confidence = Number(parsed.confidence);
-  if (!Number.isFinite(confidence)) confidence = 50;
-  confidence = Math.max(0, Math.min(100, Math.round(confidence)));
-
-  const actions = Array.isArray(parsed.nextActions)
-    ? parsed.nextActions.filter(Boolean).slice(0, 3)
-    : [];
-
-  return {
-    verdict: parsed.verdict || 'Pivot',
-    confidence,
-    killCriteria: parsed.killCriteria || '',
-    unfairAdvantage: parsed.unfairAdvantage || '',
-    nextActions: actions
-  };
+  return { result, model };
 }
 
 export async function POST(request) {
@@ -402,12 +484,14 @@ export async function POST(request) {
     const grounding = await runGrounding(question);
     const briefing = grounding && grounding.summary ? grounding.summary : '';
 
-    const [talebResult, thielResult] = await Promise.all([
+    const [talebResult, thielOut] = await Promise.all([
       runTaleb(question, briefing),
       runThiel(question, briefing)
     ]);
+    const thielResult = thielOut.result;
 
-    const synthesis = await runSynthesis(question, talebResult, thielResult, briefing);
+    const synthesisOut = await runSynthesis(question, talebResult, thielResult, briefing);
+    const synthesis = synthesisOut.result;
 
     return NextResponse.json(
       {
@@ -419,6 +503,11 @@ export async function POST(request) {
           grounding: {
             summary: grounding && grounding.summary ? grounding.summary : '',
             sources: grounding && Array.isArray(grounding.sources) ? grounding.sources : []
+          },
+          meta: {
+            grounding: grounding && grounding.model ? grounding.model : 'none',
+            thiel: thielOut.model,
+            synthesis: synthesisOut.model
           }
         }
       },
