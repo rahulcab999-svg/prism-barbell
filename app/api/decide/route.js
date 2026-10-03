@@ -27,6 +27,17 @@ const USER_FACTS_RULE =
   'Do not mix up costs and income. Monthly expenses are costs, never cash flow, revenue or profit. ' +
   'Call something income or revenue only if the briefing says so.';
 
+const FIGURE_SCOPE_RULE =
+  'Use a figure only for the exact item it describes in the briefing. ' +
+  'Do not reuse one item\'s figure for a different or combined item (for example, a cost range for one kind of facility is not a limit for a combined project). ' +
+  'If no figure exists for the whole thing, write "the budget you set before starting" instead of a number.';
+
+const NO_CERTAIN_CLAIMS_RULE =
+  'Never state as fact that there are no competitors, or that a monopoly or moat already exists. ' +
+  'Describe the moat as something the plan could build and should test. ' +
+  'Mention competitors only if the briefing names them. ' +
+  'If the briefing says no reliable data was found, say it is unverified.';
+
 function stripFences(text) {
   if (!text) return '';
   return String(text)
@@ -210,10 +221,12 @@ async function runGrounding(question) {
           } catch (_) {
             hostname = uri;
           }
-          if (!hostname) continue;
-          if (seen.has(hostname)) continue;
-          seen.add(hostname);
-          const title = chunk.web.title || hostname;
+          const rawTitle = chunk.web.title ? String(chunk.web.title) : '';
+          const key = rawTitle.trim().toLowerCase() || String(hostname || '').trim().toLowerCase();
+          if (!key) continue;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const title = rawTitle.trim() || hostname;
           out.push({ title, uri });
         }
         sources = out;
@@ -259,7 +272,8 @@ async function runTaleb(question, briefing) {
       '(for example "a large upfront cost"). ' +
       'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
       'you may say "Verify this locally." at most once per field, and only as the LAST sentence ' +
-      'of that field, never at the start. Do not use it in nextActions.';
+      'of that field, never at the start. Do not use it in nextActions. ' +
+      FIGURE_SCOPE_RULE;
   }
 
   const res = await fetch(GROQ_URL, {
@@ -316,6 +330,7 @@ async function runThiel(question, briefing) {
     'Use only Thiel\'s ideas: 0 to 1, the non-consensus secret, monopoly, power law. ' +
     'Never use the terms via negativa, ergodicity or absorbing barrier. ' +
     'Recommendation: maximum 4 numbered steps, one sentence each. ' +
+    NO_CERTAIN_CLAIMS_RULE + ' ' +
     PLAIN_ENGLISH + ' ' +
     NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object, no markdown fences, matching this schema: ' +
@@ -342,7 +357,9 @@ async function runThiel(question, briefing) {
       '(for example "a large upfront cost"). ' +
       'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
       'you may say "Verify this locally." at most once per field, and only as the LAST sentence ' +
-      'of that field, never at the start. Do not use it in nextActions.';
+      'of that field, never at the start. Do not use it in nextActions. ' +
+      FIGURE_SCOPE_RULE + ' ' +
+      NO_CERTAIN_CLAIMS_RULE;
   }
 
   const { result, model } = await callGeminiWithFallback({
@@ -397,6 +414,7 @@ async function runSynthesis(question, taleb, thiel, briefing) {
     'extreme asymmetry on the upside. ' +
     'Use "absorbing barrier" only for the point of ruin in the Taleb Floor. ' +
     'In the Thiel Ceiling describe the edge as a "competitive moat", never as an absorbing barrier. ' +
+    NO_CERTAIN_CLAIMS_RULE + ' ' +
     PLAIN_ENGLISH + ' ' +
     NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object matching this schema: ' +
@@ -416,7 +434,9 @@ async function runSynthesis(question, taleb, thiel, briefing) {
       '(for example "a large upfront cost"). ' +
       'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
       'you may say "Verify this locally." at most once per field, and only as the LAST sentence ' +
-      'of that field, never at the start. Do not use it in nextActions.\n\n';
+      'of that field, never at the start. Do not use it in nextActions. ' +
+      FIGURE_SCOPE_RULE + ' ' +
+      NO_CERTAIN_CLAIMS_RULE + '\n\n';
   }
 
   user +=
