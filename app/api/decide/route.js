@@ -38,6 +38,24 @@ const NO_CERTAIN_CLAIMS_RULE =
   'Mention competitors only if the briefing names them. ' +
   'If the briefing says no reliable data was found, say it is unverified.';
 
+const TALEB_FIGURES_RULE =
+  'Use at least 2 specific figures from the briefing, each tied to its own item ' +
+  '(for example a break-even period, a failure rate, a cost range). ' +
+  'Name which item each figure belongs to. ' +
+  'Where two parts of the plan have different payback times, point out the gap and say which part drives the ruin risk. ' +
+  'If the briefing has no figure for something, say so in words.';
+
+const NO_FIRST_OR_MISSED_RULE =
+  'Do not write that you would be the first, that a need is entirely missed, or that competitors cannot replicate the idea, ' +
+  'unless the briefing says so. ' +
+  'Write such points as hypotheses to test, for example "if demand for X exists, this could become a moat".';
+
+const RECONCILE_PLAN_RULE =
+  'If the Taleb and Thiel audits disagree, say so briefly, then choose ONE phased plan that keeps the user\'s own idea: ' +
+  'start with the safest part, add the next part only after a checkable condition is met, and treat Thiel\'s niche angle as the later upside. ' +
+  'Do not drop a part of the user\'s plan unless the Taleb audit says its ruin risk is too high, and then say it is delayed, not deleted. ' +
+  'nextActions must follow this phase order and must not mention facilities the plan delays.';
+
 function stripFences(text) {
   if (!text) return '';
   return String(text)
@@ -261,7 +279,8 @@ async function runTaleb(question, briefing) {
     'the ruin risk, path dependence, and produce a concrete Via Negativa list of what to STOP or eliminate. ' +
     'Give a final recommendation focused on survival first. ' +
     'The \'claim\' field must be one sentence stating your actual finding. Do not restate or paraphrase the question. ' +
-    USER_FACTS_RULE;
+    USER_FACTS_RULE + ' ' +
+    TALEB_FIGURES_RULE;
 
   if (briefing && briefing.trim()) {
     user +=
@@ -331,6 +350,7 @@ async function runThiel(question, briefing) {
     'Never use the terms via negativa, ergodicity or absorbing barrier. ' +
     'Recommendation: maximum 4 numbered steps, one sentence each. ' +
     NO_CERTAIN_CLAIMS_RULE + ' ' +
+    NO_FIRST_OR_MISSED_RULE + ' ' +
     PLAIN_ENGLISH + ' ' +
     NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object, no markdown fences, matching this schema: ' +
@@ -359,7 +379,8 @@ async function runThiel(question, briefing) {
       'you may say "Verify this locally." at most once per field, and only as the LAST sentence ' +
       'of that field, never at the start. Do not use it in nextActions. ' +
       FIGURE_SCOPE_RULE + ' ' +
-      NO_CERTAIN_CLAIMS_RULE;
+      NO_CERTAIN_CLAIMS_RULE + ' ' +
+      NO_FIRST_OR_MISSED_RULE;
   }
 
   const { result, model } = await callGeminiWithFallback({
@@ -415,6 +436,7 @@ async function runSynthesis(question, taleb, thiel, briefing) {
     'Use "absorbing barrier" only for the point of ruin in the Taleb Floor. ' +
     'In the Thiel Ceiling describe the edge as a "competitive moat", never as an absorbing barrier. ' +
     NO_CERTAIN_CLAIMS_RULE + ' ' +
+    NO_FIRST_OR_MISSED_RULE + ' ' +
     PLAIN_ENGLISH + ' ' +
     NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object matching this schema: ' +
@@ -436,7 +458,8 @@ async function runSynthesis(question, taleb, thiel, briefing) {
       'you may say "Verify this locally." at most once per field, and only as the LAST sentence ' +
       'of that field, never at the start. Do not use it in nextActions. ' +
       FIGURE_SCOPE_RULE + ' ' +
-      NO_CERTAIN_CLAIMS_RULE + '\n\n';
+      NO_CERTAIN_CLAIMS_RULE + ' ' +
+      NO_FIRST_OR_MISSED_RULE + '\n\n';
   }
 
   user +=
@@ -458,7 +481,8 @@ async function runSynthesis(question, taleb, thiel, briefing) {
     '(what to remove, delay, scale down or reorder) that keep the same core idea. ' +
     'Do not invent a different business. Only if the verdict is Abort may you name an alternative, ' +
     'and then say clearly "drop this plan". ' +
-    USER_FACTS_RULE;
+    USER_FACTS_RULE + ' ' +
+    RECONCILE_PLAN_RULE;
 
   const { result, model } = await callGeminiWithFallback({
     models: [GEMINI_MAIN_MODEL, 'groq'],
