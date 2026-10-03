@@ -425,9 +425,30 @@ export async function POST(request) {
       { status: 200 }
     );
   } catch (error) {
-    const message =
-      error && error.message ? error.message : 'Unknown error in dual-brain pipeline.';
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    const raw = error && error.message ? String(error.message) : 'Unknown error in dual-brain pipeline.';
+    console.error('[decide] failed:', error);
+    const lower = raw.toLowerCase();
+    let status = 500;
+    let friendly = 'Something went wrong while analysing your idea. Please try again.';
+    if (
+      lower.includes('429') ||
+      lower.includes('resource_exhausted') ||
+      lower.includes('quota') ||
+      lower.includes('rate limit')
+    ) {
+      status = 429;
+      friendly = 'Daily free AI limit reached. Please try again later. The limit resets once a day.';
+    } else if (lower.includes('timeout') || lower.includes('timed out')) {
+      status = 504;
+      friendly = 'The AI took too long to respond. Please try again.';
+    } else if (lower.includes('api_key is not set') || lower.includes('api key')) {
+      status = 500;
+      friendly = 'Server setup problem: an AI API key is missing or invalid.';
+    }
+    return NextResponse.json(
+      { success: false, error: friendly, details: raw.slice(0, 300) },
+      { status }
+    );
   }
 }
 
