@@ -132,7 +132,10 @@ async function runGrounding(question) {
       'Rules: each bullet is one short plain sentence. No bold, no asterisks, no nested bullets, ' +
       'no "(a)/(b)/(c)" labels, no markdown other than the "## " heading lines and "- " bullets. ' +
       'Max about 250 words. ' +
-      'Say "no reliable data found" when you cannot verify something. Never invent numbers.';
+      'Say "no reliable data found" when you cannot verify something. Never invent numbers. ' +
+      'Every bullet must be directly about the kind of business or decision in the question, ' +
+      'in the same country or region level. Skip statistics about unrelated platforms, products or industries. ' +
+      'If no relevant figure exists, write "no reliable data found".';
 
     const { result: response, model } = await callGeminiWithFallback({
       models: [GEMINI_MAIN_MODEL, GEMINI_LITE_MODEL],
@@ -299,6 +302,9 @@ async function runThiel(question, briefing) {
     'You are Peter Thiel — the Upside, Asymmetry & Monopoly Auditor. ' +
     'You challenge incremental thinking, hunt for the non-consensus secret, test 0-to-1 ' +
     'monopoly differentiation, and evaluate power-law leverage. ' +
+    'Use only Thiel\'s ideas: 0 to 1, the non-consensus secret, monopoly, power law. ' +
+    'Never use the terms via negativa, ergodicity or absorbing barrier. ' +
+    'Recommendation: maximum 4 numbered steps, one sentence each. ' +
     PLAIN_ENGLISH + ' ' +
     NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object, no markdown fences, matching this schema: ' +
@@ -375,6 +381,8 @@ async function runSynthesis(question, taleb, thiel, briefing) {
     'You are the Barbell Synthesis engine. You combine a Taleb downside audit and a Thiel ' +
     'upside audit into one final verdict. The barbell = extreme safety on the downside + ' +
     'extreme asymmetry on the upside. ' +
+    'Use "absorbing barrier" only for the point of ruin in the Taleb Floor. ' +
+    'In the Thiel Ceiling describe the edge as a "competitive moat", never as an absorbing barrier. ' +
     PLAIN_ENGLISH + ' ' +
     NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object matching this schema: ' +
@@ -404,9 +412,9 @@ async function runSynthesis(question, taleb, thiel, briefing) {
     'subtract up to -40 for absorbing-barrier / ruin proximity, then clamp to 0-100.\n' +
     'Provide: verdict (Proceed / Pivot / Abort), confidence (integer 0-100), ' +
     'killCriteria (2 to 3 concrete, checkable triggers: what to observe and when to stop. ' +
-    'Numbers, percentages AND time periods (months, weeks) are allowed ONLY if they come from the briefing. ' +
+    'Numbers, percentages AND time periods (days, weeks, months) are allowed ONLY if they come from the briefing. ' +
     'Otherwise write "set your own deadline before starting" or "set your own limit: [what to measure]"), ' +
-    'unfairAdvantage (Thiel Ceiling — the durable edge and 10x breakthrough), ' +
+    'unfairAdvantage (Thiel Ceiling — the durable edge and 10x breakthrough, described as a competitive moat), ' +
     'and exactly 3 immediate next actions.';
 
   const { result, model } = await callGeminiWithFallback({
