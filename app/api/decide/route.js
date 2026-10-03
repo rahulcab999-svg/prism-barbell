@@ -7,7 +7,8 @@ export const maxDuration = 60;
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = 'openai/gpt-oss-120b';
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MAIN_MODEL = 'gemini-2.5-flash';
+const GEMINI_LITE_MODEL = 'gemini-3.5-flash-lite';
 
 const PLAIN_ENGLISH =
   'PLAIN-ENGLISH RULE: Write for a smart non-specialist. The FIRST time a technical or conceptual term ' +
@@ -60,8 +61,9 @@ async function callGeminiWithFallback({ models, build }) {
         /quota/i.test(msg) ||
         /rate limit/i.test(msg);
       const is503 = msg.includes('503');
-      if (is429 || is503) {
-        console.error('[fallback]', model, is429 ? '429' : '503');
+      const is404 = msg.includes('404') || /no longer available/i.test(msg);
+      if (is429 || is503 || is404) {
+        console.error('[fallback]', model, is429 ? '429' : is503 ? '503' : '404');
         if (is503) {
           await new Promise((r) => setTimeout(r, 1000));
         }
@@ -133,7 +135,7 @@ async function runGrounding(question) {
       'Say "no reliable data found" when you cannot verify something. Never invent numbers.';
 
     const { result: response, model } = await callGeminiWithFallback({
-      models: ['gemini-2.5-flash', 'gemini-3.5-flash-lite'],
+      models: [GEMINI_MAIN_MODEL, GEMINI_LITE_MODEL],
       build: async (modelName) => {
         let localTimer = null;
         const timeoutPromise = new Promise((_, reject) => {
@@ -324,7 +326,7 @@ async function runThiel(question, briefing) {
   }
 
   const { result, model } = await callGeminiWithFallback({
-    models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'groq'],
+    models: [GEMINI_MAIN_MODEL, GEMINI_LITE_MODEL, 'groq'],
     build: async (modelName) => {
       let text = '';
       if (modelName === 'groq') {
@@ -408,7 +410,7 @@ async function runSynthesis(question, taleb, thiel, briefing) {
     'and exactly 3 immediate next actions.';
 
   const { result, model } = await callGeminiWithFallback({
-    models: ['gemini-2.5-flash', 'groq'],
+    models: [GEMINI_MAIN_MODEL, 'groq'],
     build: async (modelName) => {
       let text = '';
       if (modelName === 'groq') {
