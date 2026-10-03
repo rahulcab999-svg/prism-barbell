@@ -19,6 +19,14 @@ const PLAIN_ENGLISH =
 
 const NO_MARKDOWN = 'Write plain text only. No asterisks, no bold, no markdown, no backticks.';
 
+const USER_FACTS_RULE =
+  'First read the question for facts the user states about their situation (for example: owns the land, budget, city, floors, timeline). ' +
+  'Treat them as true. ' +
+  'Do not count a cost the user says they already cover (for example land they own: mention it at most once as an opportunity cost, never as upfront cash). ' +
+  'Never recommend anything that contradicts them (for example renting space when they own the land). ' +
+  'Do not mix up costs and income. Monthly expenses are costs, never cash flow, revenue or profit. ' +
+  'Call something income or revenue only if the briefing says so.';
+
 function stripFences(text) {
   if (!text) return '';
   return String(text)
@@ -135,7 +143,9 @@ async function runGrounding(question) {
       'Say "no reliable data found" when you cannot verify something. Never invent numbers. ' +
       'Every bullet must be directly about the kind of business or decision in the question, ' +
       'in the same country or region level. Skip statistics about unrelated platforms, products or industries. ' +
-      'If no relevant figure exists, write "no reliable data found".';
+      'If no relevant figure exists, write "no reliable data found". ' +
+      'Skip costs the question says the user already has (for example land prices when they own the land). ' +
+      'Every bullet must be directly about the kind of business in the question and the same city or region.';
 
     const { result: response, model } = await callGeminiWithFallback({
       models: [GEMINI_MAIN_MODEL, GEMINI_LITE_MODEL],
@@ -194,16 +204,16 @@ async function runGrounding(question) {
           if (!chunk || !chunk.web) continue;
           const uri = chunk.web.uri;
           if (!uri) continue;
-          if (seen.has(uri)) continue;
-          seen.add(uri);
-          let title = chunk.web.title;
-          if (!title) {
-            try {
-              title = new URL(uri).hostname;
-            } catch (_) {
-              title = uri;
-            }
+          let hostname = '';
+          try {
+            hostname = new URL(uri).hostname;
+          } catch (_) {
+            hostname = uri;
           }
+          if (!hostname) continue;
+          if (seen.has(hostname)) continue;
+          seen.add(hostname);
+          const title = chunk.web.title || hostname;
           out.push({ title, uri });
         }
         sources = out;
@@ -237,7 +247,8 @@ async function runTaleb(question, briefing) {
     'Identify the absorbing barrier (the point of no return where you are wiped out and cannot recover), ' +
     'the ruin risk, path dependence, and produce a concrete Via Negativa list of what to STOP or eliminate. ' +
     'Give a final recommendation focused on survival first. ' +
-    'The \'claim\' field must be one sentence stating your actual finding. Do not restate or paraphrase the question.';
+    'The \'claim\' field must be one sentence stating your actual finding. Do not restate or paraphrase the question. ' +
+    USER_FACTS_RULE;
 
   if (briefing && briefing.trim()) {
     user +=
@@ -316,7 +327,10 @@ async function runThiel(question, briefing) {
     'Challenge any incremental 1-to-N thinking. Identify the non-consensus secret (what important ' +
     'truth do few people agree with you on?), the 0-to-1 monopoly differentiation, and the power-law ' +
     'leverage that could create a 10x breakthrough. Give a final recommendation aimed at asymmetric upside. ' +
-    'The \'claim\' field must be one sentence stating your actual finding. Do not restate or paraphrase the question.';
+    'The \'claim\' field must be one sentence stating your actual finding. Do not restate or paraphrase the question. ' +
+    'The recommendation and the secret must build on the user\'s stated assets and stay connected to their original idea. ' +
+    'Still demand a 0-to-1 angle, but as an upgrade of their plan, not a replacement. ' +
+    USER_FACTS_RULE;
 
   if (briefing && briefing.trim()) {
     user +=
@@ -411,11 +425,20 @@ async function runSynthesis(question, taleb, thiel, briefing) {
     'add up to +25 for upside asymmetry, add up to +15 for a clear non-consensus secret, ' +
     'subtract up to -40 for absorbing-barrier / ruin proximity, then clamp to 0-100.\n' +
     'Provide: verdict (Proceed / Pivot / Abort), confidence (integer 0-100), ' +
-    'killCriteria (2 to 3 concrete, checkable triggers: what to observe and when to stop. ' +
-    'Numbers, percentages AND time periods (days, weeks, months) are allowed ONLY if they come from the briefing. ' +
-    'Otherwise write "set your own deadline before starting" or "set your own limit: [what to measure]"), ' +
+    'killCriteria (2 to 3 triggers as numbered sentences "1. ... 2. ... 3. ...". ' +
+    'Each trigger is ONE complete, natural sentence in this form: ' +
+    '"Stop or rethink if <something you can observe> by the deadline you decide before you start." ' +
+    'No square brackets, no placeholders, no text like "set your own limit: [...]" and no "within a set your own deadline". ' +
+    'Numbers, percentages and time periods are allowed ONLY if they appear in the briefing. ' +
+    'Otherwise use plain words such as "by the deadline you decide before you start" ' +
+    'or "once spending passes the amount you decided in advance"), ' +
     'unfairAdvantage (Thiel Ceiling — the durable edge and 10x breakthrough, described as a competitive moat), ' +
-    'and exactly 3 immediate next actions.';
+    'and exactly 3 immediate next actions (3 concrete steps, each starting with a verb, each tied to the user\'s plan). ' +
+    'If the verdict is Pivot, the pivot must be specific changes to the user\'s own plan ' +
+    '(what to remove, delay, scale down or reorder) that keep the same core idea. ' +
+    'Do not invent a different business. Only if the verdict is Abort may you name an alternative, ' +
+    'and then say clearly "drop this plan". ' +
+    USER_FACTS_RULE;
 
   const { result, model } = await callGeminiWithFallback({
     models: [GEMINI_MAIN_MODEL, 'groq'],
