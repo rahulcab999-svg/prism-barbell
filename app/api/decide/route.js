@@ -133,7 +133,7 @@ async function runGrounding(question) {
       'Say "no reliable data found" when you cannot verify something. Never invent numbers.';
 
     const { result: response, model } = await callGeminiWithFallback({
-      models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+      models: ['gemini-2.5-flash', 'gemini-3.5-flash-lite'],
       build: async (modelName) => {
         let localTimer = null;
         const timeoutPromise = new Promise((_, reject) => {
