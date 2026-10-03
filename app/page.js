@@ -72,6 +72,52 @@ const LOADING_STYLES = `
 }
 `;
 
+const CACHE_KEY = "prism_cache";
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CACHE_MAX = 10;
+
+function normalizeIdea(s) {
+  return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function readCacheEntry(normalized) {
+  try {
+    const raw = window.localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const entry = parsed[normalized];
+    if (!entry || typeof entry !== "object") return null;
+    if (!entry.savedAt || !entry.data) return null;
+    if (Date.now() - entry.savedAt > CACHE_TTL_MS) return null;
+    return entry;
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeCacheEntry(normalized, data) {
+  try {
+    const raw = window.localStorage.getItem(CACHE_KEY);
+    let parsed = {};
+    if (raw) {
+      try {
+        parsed = JSON.parse(raw) || {};
+      } catch (e) {
+        parsed = {};
+      }
+    }
+    if (!parsed || typeof parsed !== "object") parsed = {};
+    parsed[normalized] = { savedAt: Date.now(), data };
+    const entries = Object.entries(parsed).sort(
+      (a, b) => (b[1] && b[1].savedAt ? b[1].savedAt : 0) - (a[1] && a[1].savedAt ? a[1].savedAt : 0)
+    );
+    const out = {};
+    for (const [k, v] of entries.slice(0, CACHE_MAX)) out[k] = v;
+    window.localStorage.setItem(CACHE_KEY, JSON.stringify(out));
+  } catch (e) {}
+}
+
 export default function Home() {
   const [idea, setIdea] = useState("");
   const [data, setData] = useState(null);
@@ -80,6 +126,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [errorDetails, setErrorDetails] = useState("");
   const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
+  const [cachedAt, setCachedAt] = useState(null);
   const [view, setView] = useState("analysis");
 
   const [grounding, setGrounding] = useState({ summary: "", sources: [] });
@@ -130,14 +177,38 @@ export default function Home() {
     return () => clearInterval(id);
   }, [loading]);
 
-  async function decide() {
+  async function decide(force) {
     if (loading) return;
     if (!idea.trim()) return;
-    setLoading(true);
-    setLoadingSeconds(0);
+
     setError("");
     setErrorDetails("");
     setErrorDetailsOpen(false);
+
+    const normalized = normalizeIdea(idea);
+
+    if (!force) {
+      const cached = readCacheEntry(normalized);
+      if (cached) {
+        setData(cached.data);
+        setGrounding(cached.data?.grounding ?? { summary: "", sources: [] });
+        setGroundingOpen(false);
+        setCachedAt(cached.savedAt);
+        setSavedId(null);
+        setEmotionalState("");
+        setInvalidationTrigger("");
+        setHorizonDays(30);
+        setPremortem("");
+        setSkepticView("");
+        setReversibility("");
+        setSaveOpen(false);
+        return;
+      }
+    }
+
+    setCachedAt(null);
+    setLoading(true);
+    setLoadingSeconds(0);
     setData(null);
     setGrounding({ summary: "", sources: [] });
     setGroundingOpen(false);
@@ -183,8 +254,10 @@ export default function Home() {
         return;
       }
 
-      setData(json.data || json);
-      setGrounding(json?.data?.grounding ?? { summary: "", sources: [] });
+      const payload = json.data || json;
+      setData(payload);
+      setGrounding(payload?.grounding ?? { summary: "", sources: [] });
+      writeCacheEntry(normalized, payload);
     } catch (e) {
       if (e && e.name === "AbortError") {
         setError("The server took too long to respond. Please try again.");
@@ -970,7 +1043,7 @@ export default function Home() {
                 style={{ flex: 1, minWidth: 240, padding: "14px 18px", fontSize: 16, border: "1px solid #e5e0d5", borderRadius: 10, background: loading ? "#f7f5ef" : "#fff", outline: "none", color: "#1a1a2e" }}
               />
               <button
-                onClick={decide}
+                onClick={() => decide()}
                 disabled={loading}
                 style={{ padding: "14px 28px", fontSize: 16, fontWeight: 600, color: "#fff", background: loading ? "#c9b98a" : "#b8860b", border: "none", borderRadius: 10, cursor: loading ? "not-allowed" : "pointer" }}
               >
@@ -1095,7 +1168,7 @@ export default function Home() {
                 <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                   <button
                     type="button"
-                    onClick={decide}
+                    onClick={() => decide()}
                     style={{ padding: "8px 16px", fontSize: 14, fontWeight: 600, color: "#fff", background: "#b8860b", border: "none", borderRadius: 8, cursor: "pointer" }}
                   >
                     Try again
@@ -1115,6 +1188,19 @@ export default function Home() {
                     {errorDetails}
                   </pre>
                 )}
+              </div>
+            )}
+
+            {cachedAt && data && (
+              <div style={{ marginBottom: 16, fontSize: 13, color: "#8a7f6a" }}>
+                Showing your saved result from earlier.{" "}
+                <button
+                  type="button"
+                  onClick={() => decide(true)}
+                  style={{ background: "none", border: "none", color: "#8a7f6a", textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 13 }}
+                >
+                  Run fresh
+                </button>
               </div>
             )}
 
