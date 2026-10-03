@@ -20,11 +20,66 @@ function PrismLogo() {
   );
 }
 
+const LOADING_STYLES = `
+@keyframes prismGlow { 0%,100% { opacity: .6 } 50% { opacity: 1 } }
+@keyframes beamDraw {
+  0% { stroke-dashoffset: 1; opacity: 1 }
+  22% { stroke-dashoffset: 0; opacity: 1 }
+  82% { stroke-dashoffset: 0; opacity: 1 }
+  100% { stroke-dashoffset: 0; opacity: 0 }
+}
+@keyframes flashPop {
+  0%, 20% { opacity: 0 }
+  25% { opacity: 1 }
+  35% { opacity: .5 }
+  82% { opacity: .5 }
+  100% { opacity: 0 }
+}
+@keyframes rayDraw {
+  0% { stroke-dashoffset: 1; opacity: 0 }
+  10% { opacity: 1 }
+  30% { stroke-dashoffset: 0; opacity: 1 }
+  82% { stroke-dashoffset: 0; opacity: 1 }
+  100% { stroke-dashoffset: 0; opacity: 0 }
+}
+@keyframes dustFloat {
+  0% { opacity: 0 }
+  40% { opacity: .8 }
+  70% { opacity: .2 }
+  100% { opacity: 0 }
+}
+.prism-glass { animation: prismGlow 4.5s ease-in-out infinite; }
+.beam-line, .beam-glow { animation: beamDraw 4.5s linear infinite; animation-fill-mode: both; }
+.flash-dot, .flash-halo { animation: flashPop 4.5s ease-out infinite; animation-fill-mode: both; }
+.ray-r { animation: rayDraw 4.5s ease-out infinite; animation-fill-mode: both; animation-delay: 1s; }
+.ray-o { animation: rayDraw 4.5s ease-out infinite; animation-fill-mode: both; animation-delay: 1.15s; }
+.ray-y { animation: rayDraw 4.5s ease-out infinite; animation-fill-mode: both; animation-delay: 1.30s; }
+.ray-g { animation: rayDraw 4.5s ease-out infinite; animation-fill-mode: both; animation-delay: 1.45s; }
+.ray-b { animation: rayDraw 4.5s ease-out infinite; animation-fill-mode: both; animation-delay: 1.60s; }
+.ray-i { animation: rayDraw 4.5s ease-out infinite; animation-fill-mode: both; animation-delay: 1.75s; }
+.ray-v { animation: rayDraw 4.5s ease-out infinite; animation-fill-mode: both; animation-delay: 1.90s; }
+.dust { animation: dustFloat 4.5s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .prism-glass, .beam-line, .beam-glow, .flash-dot, .flash-halo,
+  .ray-r, .ray-o, .ray-y, .ray-g, .ray-b, .ray-i, .ray-v, .dust {
+    animation: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+  .prism-glass, .beam-line, .beam-glow,
+  .ray-r, .ray-o, .ray-y, .ray-g, .ray-b, .ray-i, .ray-v { opacity: 1 !important; }
+  .flash-dot, .flash-halo { opacity: .6 !important; }
+  .dust { opacity: 0 !important; }
+}
+`;
+
 export default function Home() {
   const [idea, setIdea] = useState("");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadingSeconds, setLoadingSeconds] = useState(0);
   const [error, setError] = useState("");
+  const [errorDetails, setErrorDetails] = useState("");
+  const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
   const [view, setView] = useState("analysis");
 
   const [grounding, setGrounding] = useState({ summary: "", sources: [] });
@@ -66,10 +121,23 @@ export default function Home() {
     } catch (e) {}
   }, [journal, hydrated]);
 
+  useEffect(() => {
+    if (!loading) return;
+    setLoadingSeconds(0);
+    const id = setInterval(() => {
+      setLoadingSeconds((s) => s + 1);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [loading]);
+
   async function decide() {
+    if (loading) return;
     if (!idea.trim()) return;
     setLoading(true);
+    setLoadingSeconds(0);
     setError("");
+    setErrorDetails("");
+    setErrorDetailsOpen(false);
     setData(null);
     setGrounding({ summary: "", sources: [] });
     setGroundingOpen(false);
@@ -81,22 +149,52 @@ export default function Home() {
     setSkepticView("");
     setReversibility("");
     setSaveOpen(false);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 70000);
+
     try {
       const res = await fetch("/api/decide", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ idea }),
+        signal: controller.signal,
       });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        setError(json.error || "Failed to generate decision.");
+
+      let json = null;
+      try {
+        json = await res.json();
+      } catch (_) {
+        setError("The server took too long to respond. Please try again.");
         return;
       }
+
+      if (!res.ok || !json || !json.success) {
+        const fallback =
+          res.status === 429
+            ? "Daily free AI limit reached. Please try again later. The limit resets once a day."
+            : res.status === 504
+            ? "The AI took too long to respond. Please try again."
+            : "Something went wrong. Please try again.";
+        let msg = json && json.error ? String(json.error) : fallback;
+        if (msg.length > 200) msg = msg.slice(0, 200);
+        setError(msg);
+        if (json && json.details) setErrorDetails(String(json.details).slice(0, 300));
+        return;
+      }
+
       setData(json.data || json);
       setGrounding(json?.data?.grounding ?? { summary: "", sources: [] });
     } catch (e) {
-      setError("Something went wrong. Please try again.");
+      if (e && e.name === "AbortError") {
+        setError("The server took too long to respond. Please try again.");
+      } else if (e instanceof TypeError) {
+        setError("Can't reach the server. Check your internet connection and try again.");
+      } else {
+        setError("Something went wrong. Please try again.");
+      }
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   }
@@ -866,9 +964,10 @@ export default function Home() {
                 value={idea}
                 onChange={(e) => setIdea(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && decide()}
+                disabled={loading}
                 placeholder="Describe your idea, decision, or bet..."
                 aria-label="Idea"
-                style={{ flex: 1, minWidth: 240, padding: "14px 18px", fontSize: 16, border: "1px solid #e5e0d5", borderRadius: 10, background: "#fff", outline: "none", color: "#1a1a2e" }}
+                style={{ flex: 1, minWidth: 240, padding: "14px 18px", fontSize: 16, border: "1px solid #e5e0d5", borderRadius: 10, background: loading ? "#f7f5ef" : "#fff", outline: "none", color: "#1a1a2e" }}
               />
               <button
                 onClick={decide}
@@ -879,7 +978,145 @@ export default function Home() {
               </button>
             </div>
 
-            {error && <div style={{ color: "#b00020", marginBottom: 24 }}>{error}</div>}
+            {loading && (
+              <div style={{ background: "#fff", border: "1px solid #e5e0d5", borderRadius: 16, overflow: "hidden", marginBottom: 24 }}>
+                <style>{LOADING_STYLES}</style>
+                <div
+                  style={{
+                    background: "radial-gradient(circle at 50% 50%, #23233f 0%, #1a1a2e 100%)",
+                    height: 150,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "12px",
+                  }}
+                >
+                  <svg
+                    width="100%"
+                    viewBox="0 0 420 150"
+                    style={{ maxWidth: 420, display: "block" }}
+                    role="img"
+                    aria-label="Loading animation: white light splitting into seven colours"
+                  >
+                    <defs>
+                      <filter id="softglow" x="-50%" y="-50%" width="200%" height="200%">
+                        <feGaussianBlur stdDeviation="3" result="blur" />
+                        <feMerge>
+                          <feMergeNode in="blur" />
+                          <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                      </filter>
+                    </defs>
+                    <polygon
+                      className="prism-glass"
+                      points="190,30 150,120 230,120"
+                      fill="rgba(255,255,255,0.12)"
+                      stroke="rgba(255,255,255,0.85)"
+                      strokeWidth="2"
+                      strokeLinejoin="round"
+                      filter="url(#softglow)"
+                    />
+                    <line
+                      className="beam-glow"
+                      x1="0" y1="85" x2="170" y2="75"
+                      stroke="rgba(255,255,255,0.25)"
+                      strokeWidth="6"
+                      strokeLinecap="round"
+                      pathLength="1"
+                      strokeDasharray="1"
+                      strokeDashoffset="1"
+                    />
+                    <line
+                      className="beam-line"
+                      x1="0" y1="85" x2="170" y2="75"
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      pathLength="1"
+                      strokeDasharray="1"
+                      strokeDashoffset="1"
+                      filter="url(#softglow)"
+                    />
+                    <circle
+                      className="flash-halo"
+                      cx="170" cy="75" r="10"
+                      fill="rgba(255,255,255,0.35)"
+                      filter="url(#softglow)"
+                    />
+                    <circle
+                      className="flash-dot"
+                      cx="170" cy="75" r="3.5"
+                      fill="#ffffff"
+                      filter="url(#softglow)"
+                    />
+                    <line className="ray-r" x1="210" y1="75" x2="415" y2="25" stroke="#e63946" strokeWidth="3" strokeLinecap="round" pathLength="1" strokeDasharray="1" strokeDashoffset="1" filter="url(#softglow)" />
+                    <line className="ray-o" x1="210" y1="75" x2="415" y2="40" stroke="#f4a261" strokeWidth="3" strokeLinecap="round" pathLength="1" strokeDasharray="1" strokeDashoffset="1" filter="url(#softglow)" />
+                    <line className="ray-y" x1="210" y1="75" x2="415" y2="55" stroke="#e9c46a" strokeWidth="3" strokeLinecap="round" pathLength="1" strokeDasharray="1" strokeDashoffset="1" filter="url(#softglow)" />
+                    <line className="ray-g" x1="210" y1="75" x2="415" y2="70" stroke="#2a9d8f" strokeWidth="3" strokeLinecap="round" pathLength="1" strokeDasharray="1" strokeDashoffset="1" filter="url(#softglow)" />
+                    <line className="ray-b" x1="210" y1="75" x2="415" y2="85" stroke="#0077b6" strokeWidth="3" strokeLinecap="round" pathLength="1" strokeDasharray="1" strokeDashoffset="1" filter="url(#softglow)" />
+                    <line className="ray-i" x1="210" y1="75" x2="415" y2="100" stroke="#7b82c9" strokeWidth="3" strokeLinecap="round" pathLength="1" strokeDasharray="1" strokeDashoffset="1" filter="url(#softglow)" />
+                    <line className="ray-v" x1="210" y1="75" x2="415" y2="115" stroke="#a64dff" strokeWidth="3" strokeLinecap="round" pathLength="1" strokeDasharray="1" strokeDashoffset="1" filter="url(#softglow)" />
+                    <circle className="dust" cx="250" cy="55" r="1" fill="#fff" style={{ animationDelay: "-1.2s" }} />
+                    <circle className="dust" cx="290" cy="45" r="1" fill="#fff" style={{ animationDelay: "-1.5s" }} />
+                    <circle className="dust" cx="330" cy="52" r="1" fill="#fff" style={{ animationDelay: "-1.8s" }} />
+                    <circle className="dust" cx="270" cy="90" r="1" fill="#fff" style={{ animationDelay: "-1.4s" }} />
+                    <circle className="dust" cx="310" cy="88" r="1" fill="#fff" style={{ animationDelay: "-1.7s" }} />
+                    <circle className="dust" cx="350" cy="78" r="1" fill="#fff" style={{ animationDelay: "-2.0s" }} />
+                    <circle className="dust" cx="380" cy="68" r="1" fill="#fff" style={{ animationDelay: "-2.2s" }} />
+                    <circle className="dust" cx="260" cy="70" r="1" fill="#fff" style={{ animationDelay: "-1.3s" }} />
+                    <circle className="dust" cx="300" cy="65" r="1" fill="#fff" style={{ animationDelay: "-1.6s" }} />
+                    <circle className="dust" cx="340" cy="60" r="1" fill="#fff" style={{ animationDelay: "-1.9s" }} />
+                    <circle className="dust" cx="370" cy="95" r="1" fill="#fff" style={{ animationDelay: "-2.1s" }} />
+                    <circle className="dust" cx="290" cy="100" r="1" fill="#fff" style={{ animationDelay: "-1.5s" }} />
+                  </svg>
+                </div>
+                <div style={{ padding: "20px 28px", background: "#fff" }}>
+                  <div aria-live="polite">
+                    <div style={{ fontSize: 16, fontWeight: 600, color: "#1a1a2e", marginBottom: 6 }}>
+                      {loadingSeconds < 10
+                        ? "Scanning live market data..."
+                        : loadingSeconds < 25
+                        ? "Running the Taleb and Thiel audits..."
+                        : loadingSeconds < 45
+                        ? "Building your Barbell verdict..."
+                        : "Taking longer than usual. Please keep this page open."}
+                    </div>
+                    <div style={{ fontSize: 13, color: "#8a7f6a" }}>
+                      {loadingSeconds}s elapsed. This usually takes 15 to 40 seconds.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div style={{ background: "#fffafa", border: "1px solid #e8c9c9", borderRadius: 12, padding: "16px 20px", color: "#7a2e2e", fontSize: 15, marginBottom: 24 }}>
+                <div style={{ marginBottom: 12 }}>{error}</div>
+                <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={decide}
+                    style={{ padding: "8px 16px", fontSize: 14, fontWeight: 600, color: "#fff", background: "#b8860b", border: "none", borderRadius: 8, cursor: "pointer" }}
+                  >
+                    Try again
+                  </button>
+                  {errorDetails && (
+                    <button
+                      type="button"
+                      onClick={() => setErrorDetailsOpen((v) => !v)}
+                      style={{ background: "none", border: "none", color: "#8a7f6a", fontSize: 13, textDecoration: "underline", cursor: "pointer", padding: 0 }}
+                    >
+                      {errorDetailsOpen ? "Hide technical details" : "Technical details"}
+                    </button>
+                  )}
+                </div>
+                {errorDetailsOpen && errorDetails && (
+                  <pre style={{ marginTop: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 13, color: "#5a5142", whiteSpace: "pre-wrap", maxHeight: 120, overflow: "auto", background: "#fff", padding: 10, borderRadius: 8, border: "1px solid #e8c9c9" }}>
+                    {errorDetails}
+                  </pre>
+                )}
+              </div>
+            )}
 
             {data && (
               <div style={{ marginBottom: 20 }}>
