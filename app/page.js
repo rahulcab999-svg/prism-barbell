@@ -72,6 +72,21 @@ const LOADING_STYLES = `
 }
 `;
 
+const PRINT_STYLES = `
+.print-only { display: none; }
+@media print {
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
+  body { background: #fff !important; }
+  main { background: #fff !important; padding: 0 !important; }
+  * { box-shadow: none !important; }
+  .print-card { break-inside: avoid; page-break-inside: avoid; }
+  .print-card, .print-card * { border-radius: 4px !important; }
+  .print-card { font-size: 12px !important; }
+}
+@page { margin: 14mm; }
+`;
+
 const CACHE_KEY = "prism_cache";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CACHE_MAX = 10;
@@ -80,13 +95,23 @@ function normalizeIdea(s) {
   return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function readCacheEntry(normalized) {
+function normalizeConstraints(c) {
+  if (!c) return "";
+  const ordered = {};
+  if (c.maxLoss) ordered.maxLoss = c.maxLoss;
+  if (c.horizon) ordered.horizon = c.horizon;
+  if (c.fallback) ordered.fallback = c.fallback;
+  if (!Object.keys(ordered).length) return "";
+  return JSON.stringify(ordered);
+}
+
+function readCacheEntry(key) {
   try {
     const raw = window.localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
-    const entry = parsed[normalized];
+    const entry = parsed[key];
     if (!entry || typeof entry !== "object") return null;
     if (!entry.savedAt || !entry.data) return null;
     if (Date.now() - entry.savedAt > CACHE_TTL_MS) return null;
@@ -96,7 +121,7 @@ function readCacheEntry(normalized) {
   }
 }
 
-function writeCacheEntry(normalized, data) {
+function writeCacheEntry(key, data) {
   try {
     const raw = window.localStorage.getItem(CACHE_KEY);
     let parsed = {};
@@ -108,7 +133,7 @@ function writeCacheEntry(normalized, data) {
       }
     }
     if (!parsed || typeof parsed !== "object") parsed = {};
-    parsed[normalized] = { savedAt: Date.now(), data };
+    parsed[key] = { savedAt: Date.now(), data };
     const entries = Object.entries(parsed).sort(
       (a, b) => (b[1] && b[1].savedAt ? b[1].savedAt : 0) - (a[1] && a[1].savedAt ? a[1].savedAt : 0)
     );
@@ -128,6 +153,12 @@ export default function Home() {
   const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
   const [cachedAt, setCachedAt] = useState(null);
   const [view, setView] = useState("analysis");
+
+  const [constraintsOpen, setConstraintsOpen] = useState(false);
+  const [maxLoss, setMaxLoss] = useState("");
+  const [timeHorizon, setTimeHorizon] = useState("");
+  const [fallbackPlan, setFallbackPlan] = useState("");
+  const [usedConstraints, setUsedConstraints] = useState(null);
 
   const [grounding, setGrounding] = useState({ summary: "", sources: [] });
   const [groundingOpen, setGroundingOpen] = useState(false);
@@ -177,7 +208,18 @@ export default function Home() {
     return () => clearInterval(id);
   }, [loading]);
 
-  async function decide(force) {
+  function buildConstraintPayload() {
+    const c = {};
+    const ml = String(maxLoss || "").trim();
+    const th = String(timeHorizon || "").trim();
+    const fp = String(fallbackPlan || "").trim();
+    if (ml) c.maxLoss = ml;
+    if (th) c.horizon = th;
+    if (fp) c.fallback = fp;
+    return Object.keys(c).length ? c : null;
+  }
+
+  async function decide(force, skipConstraints) {
     if (loading) return;
     if (!idea.trim()) return;
 
@@ -186,14 +228,17 @@ export default function Home() {
     setErrorDetailsOpen(false);
 
     const normalized = normalizeIdea(idea);
+    const constraints = skipConstraints ? null : buildConstraintPayload();
+    const cacheKey = normalized + "||" + normalizeConstraints(constraints);
 
     if (!force) {
-      const cached = readCacheEntry(normalized);
+      const cached = readCacheEntry(cacheKey);
       if (cached) {
         setData(cached.data);
         setGrounding(cached.data?.grounding ?? { summary: "", sources: [] });
         setGroundingOpen(false);
         setCachedAt(cached.savedAt);
+        setUsedConstraints(constraints);
         setSavedId(null);
         setEmotionalState("");
         setInvalidationTrigger("");
@@ -207,6 +252,7 @@ export default function Home() {
     }
 
     setCachedAt(null);
+    setUsedConstraints(null);
     setLoading(true);
     setLoadingSeconds(0);
     setData(null);
@@ -225,10 +271,11 @@ export default function Home() {
     const timeoutId = setTimeout(() => controller.abort(), 70000);
 
     try {
+      const postBody = constraints ? { idea, constraints } : { idea };
       const res = await fetch("/api/decide", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea }),
+        body: JSON.stringify(postBody),
         signal: controller.signal,
       });
 
@@ -257,7 +304,8 @@ export default function Home() {
       const payload = json.data || json;
       setData(payload);
       setGrounding(payload?.grounding ?? { summary: "", sources: [] });
-      writeCacheEntry(normalized, payload);
+      setUsedConstraints(constraints);
+      writeCacheEntry(cacheKey, payload);
     } catch (e) {
       if (e && e.name === "AbortError") {
         setError("The server took too long to respond. Please try again.");
@@ -507,6 +555,110 @@ export default function Home() {
     return isNaN(n) ? 0 : n;
   }
 
+  function buildCalendarLinks(entry) {
+    if (!entry) return null;
+    const isoDate = entry.checkInDate;
+    if (!isoDate) return null;
+    const d = new Date(isoDate);
+    if (isNaN(d.getTime())) return null;
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const day = d.getDate();
+    const pad = (n) => String(n).padStart(2, "0");
+    const ymd = `${y}${pad(m + 1)}${pad(day)}`;
+    const next = new Date(y, m, day + 1);
+    const ymdNext = `${next.getFullYear()}${pad(next.getMonth() + 1)}${pad(next.getDate())}`;
+
+    const q = String(entry.lockedQuestion || "Untitled").slice(0, 60);
+    const title = "Prism check-in: " + q;
+    const kc = entry.invalidationTrigger ? String(entry.invalidationTrigger) : "none recorded";
+    const verdict = entry.locked?.verdict || "Not recorded";
+    const conf = entry.locked?.confidence != null ? `${num(entry.locked.confidence)}%` : "";
+    let details =
+      "Review your decision. Kill criteria: " + kc + "\n" +
+      verdict + (conf ? " · " + conf : "") + "\n" +
+      "Opened from Prism Barbell.";
+    if (details.length > 1200) details = details.slice(0, 1200);
+
+    const googleUrl =
+      "https://calendar.google.com/calendar/render?action=TEMPLATE" +
+      "&text=" + encodeURIComponent(title) +
+      "&dates=" + encodeURIComponent(ymd + "/" + ymdNext) +
+      "&details=" + encodeURIComponent(details);
+
+    const esc = (s) =>
+      String(s || "")
+        .replace(/\\/g, "\\\\")
+        .replace(/;/g, "\\;")
+        .replace(/,/g, "\\,")
+        .replace(/\r?\n/g, "\\n");
+
+    const fold = (line) => {
+      if (line.length <= 75) return line;
+      let out = line.slice(0, 75);
+      let rest = line.slice(75);
+      while (rest.length > 0) {
+        out += "\r\n " + rest.slice(0, 74);
+        rest = rest.slice(74);
+      }
+      return out;
+    };
+
+    const dtstamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+    const uid = "prism-" + (entry.id || Date.now()) + "@prism-barbell";
+    const icsLines = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//Prism Barbell//Decision Journal//EN",
+      "CALSCALE:GREGORIAN",
+      "BEGIN:VEVENT",
+      "UID:" + uid,
+      "DTSTAMP:" + dtstamp,
+      "DTSTART;VALUE=DATE:" + ymd,
+      "DTEND;VALUE=DATE:" + ymdNext,
+      "SUMMARY:" + esc(title),
+      "DESCRIPTION:" + esc(details),
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ]
+      .map(fold)
+      .join("\r\n") + "\r\n";
+
+    const filename = "prism-checkin-" + y + "-" + pad(m + 1) + "-" + pad(day) + ".ics";
+
+    return { googleUrl, icsText: icsLines, filename };
+  }
+
+  function CalendarButtons({ entry }) {
+    const links = entry ? buildCalendarLinks(entry) : null;
+    if (!links) return null;
+    const onGoogle = () => {
+      const w = window.open(links.googleUrl, "_blank", "noopener,noreferrer");
+      if (!w) {
+        download(links.filename, links.icsText, "text/calendar");
+      }
+    };
+    const onIcs = () => download(links.filename, links.icsText, "text/calendar");
+    return (
+      <div className="no-print" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+        <button
+          type="button"
+          onClick={onGoogle}
+          style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #e0dccf", background: "#fff", fontSize: 13, cursor: "pointer", color: "#1a1a2e" }}
+        >
+          📅 Add check-in to Google Calendar
+        </button>
+        <button
+          type="button"
+          onClick={onIcs}
+          style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #e0dccf", background: "#fff", fontSize: 13, cursor: "pointer", color: "#1a1a2e" }}
+        >
+          Download .ics
+        </button>
+      </div>
+    );
+  }
+
   function saveDecision() {
     if (!emotionalState) return;
     const confidence = num(data?.confidence ?? data?.synthesis?.confidence ?? 70);
@@ -533,6 +685,16 @@ export default function Home() {
       checkInDate,
       review: null,
     };
+    if (
+      usedConstraints &&
+      (usedConstraints.maxLoss || usedConstraints.horizon || usedConstraints.fallback)
+    ) {
+      entry.constraints = {
+        maxLoss: usedConstraints.maxLoss || "",
+        horizon: usedConstraints.horizon || "",
+        fallback: usedConstraints.fallback || "",
+      };
+    }
     setJournal((j) => [entry, ...j]);
     setSavedId(entry.id);
   }
@@ -660,6 +822,13 @@ export default function Home() {
       lines.push(`### Pre-mortem`);
       lines.push(e.premortem || "Not recorded");
       lines.push("");
+      if (e.constraints && (e.constraints.maxLoss || e.constraints.horizon || e.constraints.fallback)) {
+        lines.push(`### Personal Limits`);
+        if (e.constraints.maxLoss) lines.push(`- Max loss: ${e.constraints.maxLoss}`);
+        if (e.constraints.horizon) lines.push(`- Horizon: ${e.constraints.horizon}`);
+        if (e.constraints.fallback) lines.push(`- Fallback: ${e.constraints.fallback}`);
+        lines.push("");
+      }
       lines.push(`### Skeptic View`);
       lines.push(e.skepticView || "Not recorded");
       lines.push("");
@@ -819,6 +988,11 @@ export default function Home() {
     const ready = days <= 0;
     const reviewed = !!entry.review;
 
+    const constraintBits = [];
+    if (entry.constraints?.maxLoss) constraintBits.push(`Max loss: ${entry.constraints.maxLoss}`);
+    if (entry.constraints?.horizon) constraintBits.push(`Horizon: ${entry.constraints.horizon}`);
+    if (entry.constraints?.fallback) constraintBits.push(`Fallback: ${entry.constraints.fallback}`);
+
     return (
       <div style={{ ...cardStyle, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
@@ -863,6 +1037,13 @@ export default function Home() {
           <div>{entry.locked?.thielAudit || "Not recorded"}</div>
         </div>
 
+        {constraintBits.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={subLabelStyle}>Limits</div>
+            <div>{constraintBits.join(" · ")}</div>
+          </div>
+        )}
+
         <button
           type="button"
           onClick={() => setShowReasoning((v) => !v)}
@@ -897,71 +1078,74 @@ export default function Home() {
         </div>
 
         {!reviewed && (
-          <div style={{ marginTop: 16, padding: 16, background: "#faf8f3", borderRadius: 12 }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>Outcome Review</div>
-            <textarea
-              value={outcome}
-              onChange={(e) => setOutcome(e.target.value)}
-              placeholder="What actually happened in reality?"
-              aria-label="What actually happened"
-              style={{ width: "100%", minHeight: 80, padding: 10, borderRadius: 8, border: "1px solid #e0dccf", fontSize: 15, outline: "none" }}
-            />
-            <div style={{ marginTop: 10, marginBottom: 6, fontSize: 13, color: "#5a5142" }}>Did any kill criteria trigger?</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {["Yes", "No", "Partly"].map((v) => (
-                <Pill key={v} active={killTriggered === v} onClick={() => setKillTriggered(v)}>{v}</Pill>
-              ))}
+          <>
+            <CalendarButtons entry={entry} />
+            <div style={{ marginTop: 16, padding: 16, background: "#faf8f3", borderRadius: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>Outcome Review</div>
+              <textarea
+                value={outcome}
+                onChange={(e) => setOutcome(e.target.value)}
+                placeholder="What actually happened in reality?"
+                aria-label="What actually happened"
+                style={{ width: "100%", minHeight: 80, padding: 10, borderRadius: 8, border: "1px solid #e0dccf", fontSize: 15, outline: "none" }}
+              />
+              <div style={{ marginTop: 10, marginBottom: 6, fontSize: 13, color: "#5a5142" }}>Did any kill criteria trigger?</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {["Yes", "No", "Partly"].map((v) => (
+                  <Pill key={v} active={killTriggered === v} onClick={() => setKillTriggered(v)}>{v}</Pill>
+                ))}
+              </div>
+              <div style={{ marginTop: 12, marginBottom: 6, fontSize: 13, color: "#5a5142" }}>Decision Quality</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
+                {QUALITIES.map((q) => (
+                  <button
+                    key={q.v}
+                    type="button"
+                    onClick={() => setQuality(q.v)}
+                    aria-pressed={quality === q.v}
+                    style={{
+                      textAlign: "left",
+                      padding: 12,
+                      borderRadius: 10,
+                      background: quality === q.v ? q.c : "#fff",
+                      border: `1px solid ${quality === q.v ? q.b : "#e0dccf"}`,
+                      cursor: "pointer",
+                      transition: "all 180ms",
+                    }}
+                  >
+                    <div style={{ fontWeight: 600 }}>{q.v}</div>
+                    <div style={{ fontSize: 12, color: "#5a5142" }}>{q.d}</div>
+                  </button>
+                ))}
+              </div>
+              <input
+                value={lesson}
+                onChange={(e) => setLesson(e.target.value)}
+                placeholder="Lesson I will carry forward (optional)"
+                aria-label="Lesson"
+                style={{ width: "100%", marginTop: 12, padding: 10, borderRadius: 8, border: "1px solid #e0dccf", fontSize: 15, outline: "none" }}
+              />
+              <button
+                type="button"
+                disabled={!outcome.trim() || !quality}
+                onClick={() => {
+                  onSaveReview({ whatHappened: outcome, killTriggered, quality, lesson, reviewedAt: new Date().toISOString() });
+                }}
+                style={{
+                  marginTop: 12,
+                  padding: "10px 18px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: !outcome.trim() || !quality ? "#c9b98a" : "#b8860b",
+                  color: "#fff",
+                  fontWeight: 600,
+                  cursor: !outcome.trim() || !quality ? "not-allowed" : "pointer",
+                }}
+              >
+                Save Outcome Review
+              </button>
             </div>
-            <div style={{ marginTop: 12, marginBottom: 6, fontSize: 13, color: "#5a5142" }}>Decision Quality</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
-              {QUALITIES.map((q) => (
-                <button
-                  key={q.v}
-                  type="button"
-                  onClick={() => setQuality(q.v)}
-                  aria-pressed={quality === q.v}
-                  style={{
-                    textAlign: "left",
-                    padding: 12,
-                    borderRadius: 10,
-                    background: quality === q.v ? q.c : "#fff",
-                    border: `1px solid ${quality === q.v ? q.b : "#e0dccf"}`,
-                    cursor: "pointer",
-                    transition: "all 180ms",
-                  }}
-                >
-                  <div style={{ fontWeight: 600 }}>{q.v}</div>
-                  <div style={{ fontSize: 12, color: "#5a5142" }}>{q.d}</div>
-                </button>
-              ))}
-            </div>
-            <input
-              value={lesson}
-              onChange={(e) => setLesson(e.target.value)}
-              placeholder="Lesson I will carry forward (optional)"
-              aria-label="Lesson"
-              style={{ width: "100%", marginTop: 12, padding: 10, borderRadius: 8, border: "1px solid #e0dccf", fontSize: 15, outline: "none" }}
-            />
-            <button
-              type="button"
-              disabled={!outcome.trim() || !quality}
-              onClick={() => {
-                onSaveReview({ whatHappened: outcome, killTriggered, quality, lesson, reviewedAt: new Date().toISOString() });
-              }}
-              style={{
-                marginTop: 12,
-                padding: "10px 18px",
-                borderRadius: 10,
-                border: "none",
-                background: !outcome.trim() || !quality ? "#c9b98a" : "#b8860b",
-                color: "#fff",
-                fontWeight: 600,
-                cursor: !outcome.trim() || !quality ? "not-allowed" : "pointer",
-              }}
-            >
-              Save Outcome Review
-            </button>
-          </div>
+          </>
         )}
 
         {reviewed && (
@@ -1050,10 +1234,25 @@ export default function Home() {
       ? "Do not do this as planned. The risk of ruin is too high."
       : "";
 
+  const hasAnyConstraint = !!(
+    String(maxLoss).trim() ||
+    String(timeHorizon).trim() ||
+    String(fallbackPlan).trim()
+  );
+
+  const usedConstraintBits = usedConstraints
+    ? [
+        usedConstraints.maxLoss && `Max loss: ${usedConstraints.maxLoss}`,
+        usedConstraints.horizon && `Horizon: ${usedConstraints.horizon}`,
+        usedConstraints.fallback && `Fallback: ${usedConstraints.fallback}`,
+      ].filter(Boolean)
+    : [];
+
   return (
     <main style={{ minHeight: "100vh", background: "#f0f2f5", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif', padding: "40px 20px" }}>
+      <style>{PRINT_STYLES}</style>
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 24 }}>
+        <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <PrismLogo />
             <h1 style={{ fontSize: 26, fontWeight: 700, color: "#1a1a2e", margin: 0 }}>
@@ -1071,11 +1270,11 @@ export default function Home() {
 
         {view === "analysis" && (
           <>
-            <p style={{ color: "#8a7f6a", marginBottom: 24, fontSize: 15 }}>
+            <p className="no-print" style={{ color: "#8a7f6a", marginBottom: 24, fontSize: 15 }}>
               Run any idea through the Taleb, Thiel, and Barbell Synthesis filters.
             </p>
 
-            <div style={{ display: "flex", gap: 12, marginBottom: 32, flexWrap: "wrap" }}>
+            <div className="no-print" style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
               <input
                 value={idea}
                 onChange={(e) => setIdea(e.target.value)}
@@ -1094,8 +1293,64 @@ export default function Home() {
               </button>
             </div>
 
+            <div className="no-print" style={{ marginBottom: 32 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() => setConstraintsOpen((v) => !v)}
+                  style={{ background: "none", border: "none", color: "#5a5142", cursor: "pointer", fontSize: 14, fontWeight: 600, padding: 0 }}
+                >
+                  {constraintsOpen ? "▾" : "▸"} Add your personal limits (optional, 10 seconds)
+                </button>
+                {!constraintsOpen && hasAnyConstraint && (
+                  <span style={{ color: "#b8860b", fontSize: 13 }}>Limits added ✓</span>
+                )}
+              </div>
+              {constraintsOpen && (
+                <div style={{ ...cardStyle, marginTop: 12, padding: "20px 24px" }}>
+                  <div style={{ marginBottom: 6, fontSize: 13, color: "#5a5142" }}>Most I can afford to lose</div>
+                  <input
+                    value={maxLoss}
+                    onChange={(e) => setMaxLoss(e.target.value.slice(0, 200))}
+                    placeholder="e.g. ₹5 lakh, or 6 months of savings"
+                    aria-label="Most I can afford to lose"
+                    maxLength={200}
+                    style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e0dccf", fontSize: 15, outline: "none", marginBottom: 12 }}
+                  />
+                  <div style={{ marginBottom: 6, fontSize: 13, color: "#5a5142" }}>How long I can wait before it pays me back</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                    {["3 months", "6 months", "1 year", "2+ years"].map((v) => (
+                      <Pill key={v} active={timeHorizon === v} onClick={() => setTimeHorizon(timeHorizon === v ? "" : v)}>{v}</Pill>
+                    ))}
+                  </div>
+                  <div style={{ marginBottom: 6, fontSize: 13, color: "#5a5142" }}>If I don&apos;t do this, I will</div>
+                  <input
+                    value={fallbackPlan}
+                    onChange={(e) => setFallbackPlan(e.target.value.slice(0, 200))}
+                    placeholder="e.g. stay in my current job"
+                    aria-label="If I don't do this, I will"
+                    maxLength={200}
+                    style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e0dccf", fontSize: 15, outline: "none", marginBottom: 12 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMaxLoss("");
+                      setTimeHorizon("");
+                      setFallbackPlan("");
+                      setConstraintsOpen(false);
+                      decide(false, true);
+                    }}
+                    style={{ background: "none", border: "none", color: "#8a7f6a", fontSize: 13, textDecoration: "underline", cursor: "pointer", padding: 0 }}
+                  >
+                    Skip and decide
+                  </button>
+                </div>
+              )}
+            </div>
+
             {loading && (
-              <div style={{ background: "#fff", border: "1px solid #e5e0d5", borderRadius: 16, overflow: "hidden", marginBottom: 24 }}>
+              <div className="no-print" style={{ background: "#fff", border: "1px solid #e5e0d5", borderRadius: 16, overflow: "hidden", marginBottom: 24 }}>
                 <style>{LOADING_STYLES}</style>
                 <div
                   style={{
@@ -1206,7 +1461,7 @@ export default function Home() {
             )}
 
             {error && (
-              <div style={{ background: "#fffafa", border: "1px solid #e8c9c9", borderRadius: 12, padding: "16px 20px", color: "#7a2e2e", fontSize: 15, marginBottom: 24 }}>
+              <div className="no-print" style={{ background: "#fffafa", border: "1px solid #e8c9c9", borderRadius: 12, padding: "16px 20px", color: "#7a2e2e", fontSize: 15, marginBottom: 24 }}>
                 <div style={{ marginBottom: 12 }}>{error}</div>
                 <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                   <button
@@ -1235,7 +1490,7 @@ export default function Home() {
             )}
 
             {cachedAt && data && (
-              <div style={{ marginBottom: 16, fontSize: 13, color: "#8a7f6a" }}>
+              <div className="no-print" style={{ marginBottom: 16, fontSize: 13, color: "#8a7f6a" }}>
                 Showing your saved result from earlier.{" "}
                 <button
                   type="button"
@@ -1248,9 +1503,38 @@ export default function Home() {
             )}
 
             {data && (
+              <div className="print-only" style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "#1a1a2e", marginBottom: 6 }}>Prism Barbell: decision report</div>
+                <div style={{ fontSize: 13, marginBottom: 4 }}>{idea}</div>
+                <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>{new Date().toLocaleDateString()}</div>
+                {usedConstraintBits.length > 0 && (
+                  <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
+                    Analysed with your limits: {usedConstraintBits.join(" · ")}
+                  </div>
+                )}
+                <div style={{ fontSize: 12, color: "#666" }}>
+                  Verdict: {synthesis.verdict} · Confidence {num(synthesis.confidence)}%
+                </div>
+              </div>
+            )}
+
+            {data && (
+              <div className="no-print" style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 13, color: "#8a7f6a" }}>Choose &apos;Save as PDF&apos; in the print window.</span>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #e0dccf", background: "#fff", fontSize: 13, cursor: "pointer", color: "#1a1a2e" }}
+                >
+                  🖨 Print / Save as PDF
+                </button>
+              </div>
+            )}
+
+            {data && (
               <div style={{ marginBottom: 20 }}>
                 {grounding?.summary ? (
-                  <>
+                  <div className="no-print">
                     <button
                       type="button"
                       onClick={() => setGroundingOpen((v) => !v)}
@@ -1299,17 +1583,23 @@ export default function Home() {
                         )}
                       </div>
                     )}
-                  </>
+                  </div>
                 ) : (
-                  <div style={{ color: "#8a7f6a", fontSize: 13 }}>Ungrounded: live data unavailable</div>
+                  <div className="no-print" style={{ color: "#8a7f6a", fontSize: 13 }}>Ungrounded: live data unavailable</div>
                 )}
+              </div>
+            )}
+
+            {data && usedConstraintBits.length > 0 && (
+              <div style={{ fontSize: 13, color: "#8a7f6a", marginBottom: 12 }}>
+                Analysed with your limits: {usedConstraintBits.join(" · ")}
               </div>
             )}
 
             {data && (
               <>
                 <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 20 }}>
-                  <div style={cardStyle}>
+                  <div className="print-card" style={cardStyle}>
                     <div style={labelStyle}>Taleb — Antifragility Audit</div>
                     <div style={bodyStyle}>
                       {taleb.main && <p style={{ margin: 0 }}>{renderText(taleb.main)}</p>}
@@ -1337,7 +1627,7 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div style={cardStyle}>
+                  <div className="print-card" style={cardStyle}>
                     <div style={labelStyle}>Thiel — Monopoly & Secrets</div>
                     <div style={bodyStyle}>
                       {thiel.main && <p style={{ margin: 0 }}>{renderText(thiel.main)}</p>}
@@ -1366,7 +1656,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div style={{ background: "#fffdf5", border: "1px solid #e8dcc0", borderRadius: 16, padding: "32px 36px", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                <div className="print-card" style={{ background: "#fffdf5", border: "1px solid #e8dcc0", borderRadius: 16, padding: "32px 36px", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                   <div style={labelStyle}>Barbell Synthesis</div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
                     <div style={{ fontSize: 24, fontWeight: 700, color: "#b8860b" }}>{synthesis.verdict}</div>
@@ -1418,7 +1708,7 @@ export default function Home() {
                     ))}
                   </div>
 
-                  <div style={{ marginTop: 28, borderTop: "1px solid #e8dcc0", paddingTop: 20 }}>
+                  <div className="no-print" style={{ marginTop: 28, borderTop: "1px solid #e8dcc0", paddingTop: 20 }}>
                     <button
                       type="button"
                       onClick={() => setSaveOpen((v) => !v)}
@@ -1430,9 +1720,15 @@ export default function Home() {
                     {saveOpen && (
                       <div style={{ marginTop: 16 }}>
                         {savedId ? (
-                          <div style={{ padding: 16, background: "#e8f0e6", borderRadius: 10, color: "#3c5a3a", fontWeight: 600 }}>
-                            Saved ✓
-                          </div>
+                          <>
+                            <div style={{ padding: 16, background: "#e8f0e6", borderRadius: 10, color: "#3c5a3a", fontWeight: 600 }}>
+                              Saved ✓
+                            </div>
+                            {(() => {
+                              const entry = journal.find((e) => e.id === savedId);
+                              return entry ? <CalendarButtons entry={entry} /> : null;
+                            })()}
+                          </>
                         ) : (
                           <>
                             <div style={{ marginBottom: 6, fontSize: 13, color: "#5a5142" }}>Emotional State (required)</div>
@@ -1513,7 +1809,7 @@ export default function Home() {
         )}
 
         {view === "journal" && (
-          <>
+          <div className="no-print">
             <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 24 }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: 22, color: "#1a1a2e" }}>📓 Decision Journal & Calibration Lab</h2>
@@ -1603,7 +1899,7 @@ export default function Home() {
                 ))}
               </>
             )}
-          </>
+          </div>
         )}
       </div>
     </main>
