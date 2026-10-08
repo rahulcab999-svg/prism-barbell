@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
+import { FRAMEWORKS } from '../../lib/frameworks';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -8,7 +9,7 @@ export const maxDuration = 60;
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = 'openai/gpt-oss-120b';
 const GEMINI_MAIN_MODEL = 'gemini-2.5-flash';
-const GEMINI_LITE_MODEL = 'gemini-3.5-flash-lite';
+const GEMINI_LITE_MODEL = 'gemini-2.0-flash-lite';
 
 const PLAIN_ENGLISH =
   'PLAIN-ENGLISH RULE: Write for a smart non-specialist. The FIRST time a technical or conceptual term ' +
@@ -295,10 +296,16 @@ async function runTaleb(question, briefing, constraints) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error('GROQ_API_KEY is not set.');
 
+  const talebFramework = FRAMEWORKS && FRAMEWORKS.taleb ? FRAMEWORKS.taleb : null;
+  const modelsContext = talebFramework && talebFramework.coreModels ? talebFramework.coreModels.join('; ') : '';
+  const excerptsContext = talebFramework ? JSON.stringify(talebFramework.literatureDirectives || talebFramework.literatureExcerpts || {}) : '';
+
   const system =
     'You are Nassim Nicholas Taleb — the Downside, Fragility & Ruin Auditor. ' +
+    'You strictly audit decisions using your primary literature models from Antifragile: ' + modelsContext + '. ' +
+    'Specific literature rules: ' + excerptsContext + '. ' +
     'You hunt for absorbing barriers, ruin risk, and path dependence, and you prescribe ' +
-    'Via Negativa (removing things rather than adding). ' +
+    'Via Negativa (removing things rather than adding) and Seneca\'s Barbell (protecting the 85-90% survival floor). ' +
     PLAIN_ENGLISH + ' ' +
     NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object, no markdown fences, matching this schema: ' +
@@ -382,12 +389,16 @@ async function runThiel(question, briefing, constraints) {
 
   const ai = new GoogleGenAI({ apiKey });
 
+  const thielFramework = FRAMEWORKS && FRAMEWORKS.thiel ? FRAMEWORKS.thiel : null;
+  const modelsContext = thielFramework && thielFramework.coreModels ? thielFramework.coreModels.join('; ') : '';
+  const excerptsContext = thielFramework ? JSON.stringify(thielFramework.literatureDirectives || thielFramework.literatureExcerpts || {}) : '';
+
   const system =
     'You are Peter Thiel — the Upside, Asymmetry & Monopoly Auditor. ' +
-    'You challenge incremental thinking, hunt for the non-consensus secret, test 0-to-1 ' +
-    'monopoly differentiation, and evaluate power-law leverage. ' +
-    'Use only Thiel\'s ideas: 0 to 1, the non-consensus secret, monopoly, power law. ' +
-    'Never use the terms via negativa, ergodicity or absorbing barrier. ' +
+    'You audit decisions grounded strictly in your primary literature from Zero to One: ' + modelsContext + '. ' +
+    'Specific literature rules: ' + excerptsContext + '. ' +
+    'You challenge incremental thinking, test against your 7 Questions (Chapter 13: Engineering 10x, Timing, Monopoly, People, Distribution, Durability, Secret), ' +
+    'evaluate your 4 Monopoly Moats (Chapter 5: Proprietary Tech, Network Effects, Economies of Scale, Branding), and hunt for the Non-Consensus Secret. ' +
     'Recommendation: maximum 4 numbered steps, one sentence each. ' +
     NO_CERTAIN_CLAIMS_RULE + ' ' +
     NO_FIRST_OR_MISSED_RULE + ' ' +
@@ -400,8 +411,8 @@ async function runThiel(question, briefing, constraints) {
     'Audit this decision for upside, asymmetry, and monopoly potential:\n\n' +
     '"' + question + '"\n\n' +
     'Challenge any incremental 1-to-N thinking. Identify the non-consensus secret (what important ' +
-    'truth do few people agree with you on?), the 0-to-1 monopoly differentiation, and the power-law ' +
-    'leverage that could create a 10x breakthrough. Give a final recommendation aimed at asymmetric upside. ' +
+    'truth do few people agree with you on?), the 0-to-1 monopoly differentiation (Proprietary tech, Network effects, Economies of scale, or Branding), ' +
+    'and the power-law leverage that could create a 10x breakthrough. Give a final recommendation aimed at asymmetric upside. ' +
     'The \'claim\' field must be one sentence stating your actual finding. Do not restate or paraphrase the question. ' +
     'The recommendation and the secret must build on the user\'s stated assets and stay connected to their original idea. ' +
     'Still demand a 0-to-1 angle, but as an upgrade of their plan, not a replacement. ' +
@@ -477,8 +488,8 @@ async function runSynthesis(question, taleb, thiel, briefing, constraints) {
   const ai = new GoogleGenAI({ apiKey });
 
   const system =
-    'You are the Barbell Synthesis engine. You combine a Taleb downside audit and a Thiel ' +
-    'upside audit into one final verdict. The barbell = extreme safety on the downside + ' +
+    'You are the Barbell Synthesis engine. You combine a Taleb downside audit (Antifragile floor) and a Thiel ' +
+    'upside audit (Zero to One ceiling) into one final verdict. The barbell = extreme safety on the downside (Seneca\'s Barbell Chapter 11) + ' +
     'extreme asymmetry on the upside. ' +
     'Use "absorbing barrier" only for the point of ruin in the Taleb Floor. ' +
     'In the Thiel Ceiling describe the edge as a "competitive moat", never as an absorbing barrier. ' +
