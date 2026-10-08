@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
-import { FRAMEWORKS } from '../../lib/frameworks';
+import { FRAMEWORKS } from '../../../lib/frameworks';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
