@@ -98,6 +98,7 @@ function stripFences(text) {
 }
 
 function extractJson(text) {
+  if (!text) return null;
   const cleaned = stripFences(text);
   try {
     return JSON.parse(cleaned);
@@ -115,37 +116,31 @@ function extractJson(text) {
   }
 }
 
-async function callGeminiWithFallback({ models, build }) {
+async function callModelWithFallback({ providers, build, timeoutMs = 20000 }) {
   let lastError = null;
-  for (let i = 0; i < models.length; i++) {
-    const model = models[i];
+  for (const provider of providers) {
+    let timer = null;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms on ${provider}`)), timeoutMs);
+    });
     try {
-      const result = await build(model);
-      return { result, model };
+      const result = await Promise.race([build(provider), timeoutPromise]);
+      if (result !== null && result !== undefined) {
+        return { result, provider };
+      }
+      lastError = new Error(`Provider ${provider} produced invalid output format.`);
     } catch (error) {
       lastError = error;
       const msg = error && error.message ? String(error.message) : '';
-      const is429 =
-        msg.includes('429') ||
-        /RESOURCE_EXHAUSTED/i.test(msg) ||
-        /quota/i.test(msg) ||
-        /rate limit/i.test(msg);
-      const is503 = msg.includes('503');
-      const is404 = msg.includes('404') || /no longer available/i.test(msg);
-      if (is429 || is503 || is404) {
-        console.error('[fallback]', model, is429 ? '429' : is503 ? '503' : '404');
-        if (is503) {
-          await new Promise((r) => setTimeout(r, 1000));
-        }
-        continue;
-      }
-      throw error;
+      console.warn(`[fallback] ${provider} failed (${msg.slice(0, 100)})`);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
-  throw lastError || new Error('All providers failed.');
+  throw lastError || new Error('All providers in fallback pool failed.');
 }
 
-async function callGroqText(user, system, temperature) {
+async function callGroqJson(user, system, temperature = 0.2) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error('GROQ_API_KEY is not set.');
   const res = await fetch(GROQ_URL, {
@@ -166,17 +161,38 @@ async function callGroqText(user, system, temperature) {
   });
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    throw new Error(`Groq failed (${res.status}): ${errText.slice(0, 300)}`);
+    throw new Error(`Groq HTTP ${res.status}: ${errText.slice(0, 200)}`);
   }
   const payload = await res.json();
-  return (
-    (payload &&
-      payload.choices &&
-      payload.choices[0] &&
-      payload.choices[0].message &&
-      payload.choices[0].message.content) ||
-    ''
-  );
+  const raw =
+    payload &&
+    payload.choices &&
+    payload.choices[0] &&
+    payload.choices[0].message &&
+    payload.choices[0].message.content;
+  return extractJson(raw);
+}
+
+async function callGeminiJson(ai, modelName, user, system, temperature = 0.2) {
+  const response = await ai.models.generateContent({
+    model: modelName,
+    contents: user,
+    config: {
+      systemInstruction: system,
+      temperature,
+      responseMimeType: 'application/json'
+    }
+  });
+  const text =
+    (response && response.text) ||
+    (response &&
+      response.candidates &&
+      response.candidates[0] &&
+      response.candidates[0].content &&
+      response.candidates[0].content.parts &&
+      response.candidates[0].content.parts.map((p) => p.text || '').join('')) ||
+    '';
+  return extractJson(text);
 }
 
 async function runGrounding(question) {
@@ -209,29 +225,23 @@ async function runGrounding(question) {
       'Skip costs the question says the user already has (for example land prices when they own the land). ' +
       'Every bullet must be directly about the kind of business in the question and the same city or region.';
 
-    const { result: response, model } = await callGeminiWithFallback({
-      models: [GEMINI_MAIN_MODEL, GEMINI_LITE_MODEL],
-      build: async (modelName) => {
-        let localTimer = null;
-        const timeoutPromise = new Promise((_, reject) => {
-          localTimer = setTimeout(() => reject(new Error('Grounding timeout')), 35000);
-        });
-        try {
-          return await Promise.race([
-            ai.models.generateContent({
-              model: modelName,
-              contents: prompt,
-              config: {
-                tools: [{ googleSearch: {} }],
-                temperature: 0.2
-              }
-            }),
-            timeoutPromise
-          ]);
-        } finally {
-          if (localTimer) clearTimeout(localTimer);
+    let localTimer = null;
+    const timeoutPromise = new Promise((_, reject) => {
+      localTimer = setTimeout(() => reject(new Error('Grounding timeout after 25s')), 25000);
+    });
+
+    const response = await Promise.race([
+      ai.models.generateContent({
+        model: GEMINI_MAIN_MODEL,
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          temperature: 0.1
         }
-      }
+      }),
+      timeoutPromise
+    ]).finally(() => {
+      if (localTimer) clearTimeout(localTimer);
     });
 
     const text =
@@ -246,7 +256,7 @@ async function runGrounding(question) {
 
     const summary = text ? String(text).trim() : '';
     if (!summary) {
-      return { summary: '', sources: [], reason: 'Empty grounding output.', model };
+      return { summary: '', sources: [], reason: 'Empty grounding output.', model: GEMINI_MAIN_MODEL };
     }
 
     let sources = [];
@@ -286,36 +296,37 @@ async function runGrounding(question) {
       sources = [];
     }
 
-    return { summary, sources, model };
-  } catch (_) {
-    return { summary: '', sources: [], reason: 'Grounding failed.', model: 'none' };
+    return { summary, sources, model: GEMINI_MAIN_MODEL };
+  } catch (err) {
+    return { summary: '', sources: [], reason: 'Grounding failed: ' + (err?.message || ''), model: 'none' };
   }
 }
 
 async function runTaleb(question, briefing, constraints) {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error('GROQ_API_KEY is not set.');
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
 
   const talebFramework = FRAMEWORKS && FRAMEWORKS.taleb ? FRAMEWORKS.taleb : null;
   const modelsContext = talebFramework && talebFramework.coreModels ? talebFramework.coreModels.join('; ') : '';
   const excerptsContext = talebFramework ? JSON.stringify(talebFramework.literatureDirectives || talebFramework.literatureExcerpts || {}) : '';
 
   const system =
-    'You are Nassim Nicholas Taleb — the Downside, Fragility & Ruin Auditor. ' +
-    'You strictly audit decisions using your primary literature models from Antifragile: ' + modelsContext + '. ' +
-    'Specific literature rules: ' + excerptsContext + '. ' +
+    'You are an AI decision auditor inspired by the analytical frameworks of Nassim Nicholas Taleb (Antifragile, Skin in the Game, The Black Swan). ' +
+    'This tool is independent and not affiliated with or endorsed by the author. ' +
+    'Core models: ' + modelsContext + '. Directives: ' + excerptsContext + '. ' +
     'You hunt for absorbing barriers, ruin risk, and path dependence, and you prescribe ' +
     'Via Negativa (removing things rather than adding) and Seneca\'s Barbell (protecting the 85-90% survival floor). ' +
     PLAIN_ENGLISH + ' ' +
     NO_MARKDOWN + ' ' +
-    'Return ONLY a valid JSON object, no markdown fences, matching this schema: ' +
-    '{ "claim": "string", "absorbingBarrier": "string", "viaNegativa": ["string"], "recommendation": "string" }';
+    'Return ONLY a valid JSON object matching this schema: ' +
+    '{ "claim": "string", "absorbingBarrier": "string", "ruinProximity": "critical | moderate | negligible", "viaNegativa": ["string"], "recommendation": "string" }';
 
   let user =
     'Audit this decision strictly for downside and ruin risk:\n\n' +
     '"' + question + '"\n\n' +
     'Identify the absorbing barrier (the point of no return where you are wiped out and cannot recover), ' +
     'the ruin risk, path dependence, and produce a concrete Via Negativa list of what to STOP or eliminate. ' +
+    'Rate ruinProximity as exactly one of: "critical" (immediate wipeout risk), "moderate" (severe drag/strain), or "negligible" (well-buffered/safe). ' +
     'Give a final recommendation focused on survival first. ' +
     'The \'claim\' field must be one sentence stating your actual finding. Do not restate or paraphrase the question. ' +
     USER_FACTS_RULE + ' ' +
@@ -326,11 +337,7 @@ async function runTaleb(question, briefing, constraints) {
       '\n\nLIVE MARKET BRIEFING:\n' + briefing + '\n\n' +
       'Use the real base rates and failure traps above to define the absorbing barrier and the ruin risk. ' +
       'Use names and numbers ONLY if they appear in the briefing. ' +
-      'If a number is not in the briefing, do not state any number. Describe it in words instead ' +
-      '(for example "a large upfront cost"). ' +
-      'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
-      'you may say "Verify this locally." at most once per field, and only as the LAST sentence ' +
-      'of that field, never at the start. Do not use it in nextActions. ' +
+      'If a number is not in the briefing, do not state any number. Describe it in words instead. ' +
       FIGURE_SCOPE_RULE;
   }
 
@@ -338,65 +345,53 @@ async function runTaleb(question, briefing, constraints) {
   if (limitsBlock) {
     user += '\n\n' + limitsBlock + '\n\n' +
       'Judge the ruin point against the user\'s maximum affordable loss. ' +
-      'If the plan\'s upfront cost or total exposure from the briefing is larger than that limit, say so clearly. ' +
-      'If no figure exists for the plan, say that in words.';
+      'If the plan\'s upfront cost or total exposure from the briefing exceeds their stated loss limit, ruinProximity MUST be "critical".';
   }
 
-  const res = await fetch(GROQ_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      temperature: 0.6,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user }
-      ]
-    })
+  const providers = ['groq', GEMINI_MAIN_MODEL, GEMINI_LITE_MODEL];
+
+  const { result: parsed, provider } = await callModelWithFallback({
+    providers,
+    timeoutMs: 18000,
+    build: async (p) => {
+      let data = null;
+      if (p === 'groq') {
+        data = await callGroqJson(user, system, 0.2);
+      } else if (ai) {
+        data = await callGeminiJson(ai, p, user, system, 0.2);
+      }
+      if (data && typeof data === 'object' && (data.claim || data.absorbingBarrier)) {
+        let rp = String(data.ruinProximity || '').toLowerCase();
+        if (!['critical', 'moderate', 'negligible'].includes(rp)) {
+          rp = 'moderate';
+        }
+        return {
+          claim: data.claim || '',
+          absorbingBarrier: data.absorbingBarrier || '',
+          ruinProximity: rp,
+          viaNegativa: Array.isArray(data.viaNegativa) ? data.viaNegativa.filter(Boolean) : [],
+          recommendation: data.recommendation || ''
+        };
+      }
+      return null;
+    }
   });
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Groq Taleb brain failed (${res.status}): ${errText.slice(0, 300)}`);
-  }
-
-  const payload = await res.json();
-  const content =
-    payload &&
-    payload.choices &&
-    payload.choices[0] &&
-    payload.choices[0].message &&
-    payload.choices[0].message.content;
-
-  const parsed = extractJson(content);
-  if (!parsed) throw new Error('Taleb brain returned non-JSON content.');
-
-  return {
-    claim: parsed.claim || '',
-    absorbingBarrier: parsed.absorbingBarrier || '',
-    viaNegativa: Array.isArray(parsed.viaNegativa) ? parsed.viaNegativa.filter(Boolean) : [],
-    recommendation: parsed.recommendation || ''
-  };
+  return { result: parsed, model: provider };
 }
 
 async function runThiel(question, briefing, constraints) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error('GEMINI_API_KEY is not set.');
-
-  const ai = new GoogleGenAI({ apiKey });
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
 
   const thielFramework = FRAMEWORKS && FRAMEWORKS.thiel ? FRAMEWORKS.thiel : null;
   const modelsContext = thielFramework && thielFramework.coreModels ? thielFramework.coreModels.join('; ') : '';
   const excerptsContext = thielFramework ? JSON.stringify(thielFramework.literatureDirectives || thielFramework.literatureExcerpts || {}) : '';
 
   const system =
-    'You are Peter Thiel — the Upside, Asymmetry & Monopoly Auditor. ' +
-    'You audit decisions grounded strictly in your primary literature from Zero to One: ' + modelsContext + '. ' +
-    'Specific literature rules: ' + excerptsContext + '. ' +
+    'You are an AI decision auditor inspired by the analytical frameworks of Peter Thiel (Zero to One, CS183, Competition is for Losers). ' +
+    'This tool is independent and not affiliated with or endorsed by the author. ' +
+    'Core models: ' + modelsContext + '. Directives: ' + excerptsContext + '. ' +
     'You challenge incremental thinking, test against your 7 Questions (Chapter 13: Engineering 10x, Timing, Monopoly, People, Distribution, Durability, Secret), ' +
     'evaluate your 4 Monopoly Moats (Chapter 5: Proprietary Tech, Network Effects, Economies of Scale, Branding), and hunt for the Non-Consensus Secret. ' +
     'Recommendation: maximum 4 numbered steps, one sentence each. ' +
@@ -404,31 +399,24 @@ async function runThiel(question, briefing, constraints) {
     NO_FIRST_OR_MISSED_RULE + ' ' +
     PLAIN_ENGLISH + ' ' +
     NO_MARKDOWN + ' ' +
-    'Return ONLY a valid JSON object, no markdown fences, matching this schema: ' +
-    '{ "claim": "string", "secret": "string", "monopolyAngle": "string", "recommendation": "string" }';
+    'Return ONLY a valid JSON object matching this schema: ' +
+    '{ "claim": "string", "secret": "string", "asymmetryTier": "power_law | linear | capped", "secretQuality": "strong | consensus", "monopolyAngle": "string", "recommendation": "string" }';
 
   let user =
     'Audit this decision for upside, asymmetry, and monopoly potential:\n\n' +
     '"' + question + '"\n\n' +
-    'Challenge any incremental 1-to-N thinking. Identify the non-consensus secret (what important ' +
-    'truth do few people agree with you on?), the 0-to-1 monopoly differentiation (Proprietary tech, Network effects, Economies of scale, or Branding), ' +
-    'and the power-law leverage that could create a 10x breakthrough. Give a final recommendation aimed at asymmetric upside. ' +
+    'Challenge any incremental 1-to-N thinking. Identify the non-consensus secret (what important truth do few people agree with you on?), ' +
+    'the 0-to-1 monopoly differentiation, and the power-law leverage that could create a 10x breakthrough. ' +
+    'Rate asymmetryTier as exactly one of: "power_law" (10x-100x exponential upside), "linear" (modest incremental gains), or "capped" (ceiling on returns). ' +
+    'Rate secretQuality as exactly one of: "strong" (genuine non-obvious contrarian insight) or "consensus" (common knowledge/crowded). ' +
+    'Give a final recommendation aimed at asymmetric upside. ' +
     'The \'claim\' field must be one sentence stating your actual finding. Do not restate or paraphrase the question. ' +
-    'The recommendation and the secret must build on the user\'s stated assets and stay connected to their original idea. ' +
-    'Still demand a 0-to-1 angle, but as an upgrade of their plan, not a replacement. ' +
     USER_FACTS_RULE;
 
   if (briefing && briefing.trim()) {
     user +=
       '\n\nLIVE MARKET BRIEFING:\n' + briefing + '\n\n' +
-      'Evaluate the named competitors above and demand a genuine 0-to-1 differentiator, ' +
-      'rejecting any incremental copycat. ' +
-      'Use names and numbers ONLY if they appear in the briefing. ' +
-      'If a number is not in the briefing, do not state any number. Describe it in words instead ' +
-      '(for example "a large upfront cost"). ' +
-      'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
-      'you may say "Verify this locally." at most once per field, and only as the LAST sentence ' +
-      'of that field, never at the start. Do not use it in nextActions. ' +
+      'Evaluate the named competitors above and demand a genuine 0-to-1 differentiator. ' +
       FIGURE_SCOPE_RULE + ' ' +
       NO_CERTAIN_CLAIMS_RULE + ' ' +
       NO_FIRST_OR_MISSED_RULE;
@@ -437,169 +425,176 @@ async function runThiel(question, briefing, constraints) {
   const limitsBlock = buildUserLimitsBlock(constraints);
   if (limitsBlock) {
     user += '\n\n' + limitsBlock + '\n\n' +
-      'Treat the fallback as the opportunity cost of doing this. ' +
-      'Make sure any 0-to-1 suggestion fits the user\'s time horizon.';
+      'Treat the fallback as the opportunity cost. Make sure any 0-to-1 suggestion fits the user\'s time horizon.';
   }
 
-  const { result, model } = await callGeminiWithFallback({
-    models: [GEMINI_MAIN_MODEL, GEMINI_LITE_MODEL, 'groq'],
-    build: async (modelName) => {
-      let text = '';
-      if (modelName === 'groq') {
-        text = await callGroqText(user, system, 0.7);
-      } else {
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: user,
-          config: {
-            systemInstruction: system,
-            temperature: 0.7,
-            responseMimeType: 'application/json'
-          }
-        });
-        text =
-          (response && response.text) ||
-          (response &&
-            response.candidates &&
-            response.candidates[0] &&
-            response.candidates[0].content &&
-            response.candidates[0].content.parts &&
-            response.candidates[0].content.parts.map((p) => p.text || '').join('')) ||
-          '';
+  const providers = [GEMINI_MAIN_MODEL, GEMINI_LITE_MODEL, 'groq'];
+
+  const { result: parsed, provider } = await callModelWithFallback({
+    providers,
+    timeoutMs: 18000,
+    build: async (p) => {
+      let data = null;
+      if (p === 'groq') {
+        data = await callGroqJson(user, system, 0.2);
+      } else if (ai) {
+        data = await callGeminiJson(ai, p, user, system, 0.2);
       }
-      const parsed = extractJson(text);
-      if (!parsed) throw new Error('Thiel brain returned non-JSON content.');
-      return {
-        claim: parsed.claim || '',
-        secret: parsed.secret || '',
-        monopolyAngle: parsed.monopolyAngle || '',
-        recommendation: parsed.recommendation || ''
-      };
+      if (data && typeof data === 'object' && (data.claim || data.secret || data.monopolyAngle)) {
+        let at = String(data.asymmetryTier || '').toLowerCase();
+        if (!['power_law', 'linear', 'capped'].includes(at)) at = 'linear';
+        let sq = String(data.secretQuality || '').toLowerCase();
+        if (!['strong', 'consensus'].includes(sq)) sq = 'consensus';
+        return {
+          claim: data.claim || '',
+          secret: data.secret || '',
+          asymmetryTier: at,
+          secretQuality: sq,
+          monopolyAngle: data.monopolyAngle || '',
+          recommendation: data.recommendation || ''
+        };
+      }
+      return null;
     }
   });
 
-  return { result, model };
+  return { result: parsed, model: provider };
 }
 
-async function runSynthesis(question, taleb, thiel, briefing, constraints) {
+function calculateDeterministicConfidence({ taleb, thiel, constraints }) {
+  let score = 50;
+  const math = { base: 50 };
+
+  // Thiel asymmetry points
+  if (thiel?.asymmetryTier === 'power_law') {
+    score += 25;
+    math.upsideAsymmetry = 25;
+  } else if (thiel?.asymmetryTier === 'linear') {
+    score += 10;
+    math.upsideAsymmetry = 10;
+  } else {
+    math.upsideAsymmetry = 0;
+  }
+
+  // Thiel secret points
+  if (thiel?.secretQuality === 'strong') {
+    score += 15;
+    math.secretClarity = 15;
+  } else {
+    math.secretClarity = 0;
+  }
+
+  // Taleb ruin penalties
+  const maxLossExceeded = !!(
+    constraints?.maxLoss &&
+    taleb?.absorbingBarrier &&
+    /exceed|insufficient|ruin|wip/i.test(taleb.absorbingBarrier)
+  );
+
+  if (taleb?.ruinProximity === 'critical' || maxLossExceeded) {
+    score -= 40;
+    math.ruinProximity = -40;
+  } else if (taleb?.ruinProximity === 'moderate') {
+    score -= 20;
+    math.ruinProximity = -20;
+  } else {
+    math.ruinProximity = 0;
+  }
+
+  const confidence = Math.max(0, Math.min(100, Math.round(score)));
+  math.total = confidence;
+
+  // Pure deterministic verdict
+  const verdict = confidence >= 65 ? 'Proceed' : confidence >= 35 ? 'Pivot' : 'Abort';
+
+  return { confidence, verdict, math };
+}
+
+async function runSynthesis(question, taleb, thiel, briefing, constraints, deterministicScore) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set.');
 
   const ai = new GoogleGenAI({ apiKey });
 
   const system =
-    'You are the Barbell Synthesis engine. You combine a Taleb downside audit (Antifragile floor) and a Thiel ' +
-    'upside audit (Zero to One ceiling) into one final verdict. The barbell = extreme safety on the downside (Seneca\'s Barbell Chapter 11) + ' +
-    'extreme asymmetry on the upside. ' +
-    'Use "absorbing barrier" only for the point of ruin in the Taleb Floor. ' +
-    'In the Thiel Ceiling describe the edge as a "competitive moat", never as an absorbing barrier. ' +
+    'You are the Barbell Synthesis engine. Combine the Taleb downside audit and Thiel upside audit into execution synthesis. ' +
+    'The final verdict is already calculated deterministically as: "' + deterministicScore.verdict + '" with confidence score ' + deterministicScore.confidence + '%. ' +
+    'Do not change the verdict. Explain why it was assigned. ' +
     NO_CERTAIN_CLAIMS_RULE + ' ' +
     NO_FIRST_OR_MISSED_RULE + ' ' +
     PLAIN_ENGLISH + ' ' +
     NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object matching this schema: ' +
-    '{ "verdict": "Proceed | Pivot | Abort", "confidence": 0, "killCriteria": "string", ' +
-    '"unfairAdvantage": "string", "nextActions": ["string", "string", "string"] }';
+    '{ "rationale": "string", "killCriteria": "string", "whatWouldChangeMyMind": "string", "unfairAdvantage": "string", "nextActions": ["string", "string", "string"] }';
 
   let user =
     'DECISION:\n"' + question + '"\n\n' +
+    'DETERMINISTIC VERDICT: ' + deterministicScore.verdict + ' (Score: ' + deterministicScore.confidence + '%)\n' +
+    'SCORE BREAKDOWN: Base 50, Upside +' + deterministicScore.math.upsideAsymmetry + ', Secret +' + deterministicScore.math.secretClarity + ', Ruin ' + deterministicScore.math.ruinProximity + '\n\n' +
     'TALEB DOWNSIDE AUDIT:\n' + JSON.stringify(taleb) + '\n\n' +
     'THIEL UPSIDE AUDIT:\n' + JSON.stringify(thiel) + '\n\n';
-
-  if (briefing && briefing.trim()) {
-    user += 'LIVE MARKET BRIEFING:\n' + briefing + '\n\n' +
-      'Keep the verdict consistent with the real facts above. ' +
-      'Use names and numbers ONLY if they appear in the briefing. ' +
-      'If a number is not in the briefing, do not state any number. Describe it in words instead ' +
-      '(for example "a large upfront cost"). ' +
-      'Never write "(not in briefing)" after a figure. If something important is unknown, ' +
-      'you may say "Verify this locally." at most once per field, and only as the LAST sentence ' +
-      'of that field, never at the start. Do not use it in nextActions. ' +
-      FIGURE_SCOPE_RULE + ' ' +
-      NO_CERTAIN_CLAIMS_RULE + ' ' +
-      NO_FIRST_OR_MISSED_RULE + '\n\n';
-  }
 
   const limitsBlock = buildUserLimitsBlock(constraints);
   if (limitsBlock) {
     user += limitsBlock + '\n\n' +
-      'The killCriteria must reference the user\'s maximum loss and time horizon in their own words where given ' +
-      '(this is the one case where numbers and time periods may come from the user instead of the briefing). ' +
-      'If the verdict is Proceed or Pivot, make the phased plan fit within the maximum loss and the time horizon. ' +
-      'Compare the plan to the fallback in one sentence. ' +
-      'Treat exposure above the user\'s maximum loss as ruin proximity in the existing confidence formula.\n\n';
+      'Incorporate the user\'s stated max loss and horizon directly into the kill criteria.\n\n';
+  }
+
+  if (briefing && briefing.trim()) {
+    user += 'LIVE MARKET BRIEFING:\n' + briefing + '\n\n';
   }
 
   user +=
-    'Synthesize these into a Barbell Synthesis.\n' +
-    'Compute the confidence score MECHANICALLY (not vibes): start at 50, ' +
-    'add up to +25 for upside asymmetry, add up to +15 for a clear non-consensus secret, ' +
-    'subtract up to -40 for absorbing-barrier / ruin proximity, then clamp to 0-100.\n' +
-    'Provide: verdict (Proceed / Pivot / Abort), confidence (integer 0-100), ' +
-    'killCriteria (2 to 3 triggers as numbered sentences "1. ... 2. ... 3. ...". ' +
-    'Each trigger is ONE complete, natural sentence in this form: ' +
-    '"Stop or rethink if <something you can observe> by the deadline you decide before you start." ' +
-    'No square brackets, no placeholders, no text like "set your own limit: [...]" and no "within a set your own deadline". ' +
-    'Numbers, percentages and time periods are allowed ONLY if they appear in the briefing OR in the user\'s limits. ' +
-    'Otherwise use plain words such as "by the deadline you decide before you start" ' +
-    'or "once spending passes the amount you decided in advance"), ' +
-    'unfairAdvantage (Thiel Ceiling — the durable edge and 10x breakthrough, described as a competitive moat), ' +
-    'and exactly 3 immediate next actions (3 concrete steps, each starting with a verb, each tied to the user\'s plan). ' +
-    'If the verdict is Pivot, the pivot must be specific changes to the user\'s own plan ' +
-    '(what to remove, delay, scale down or reorder) that keep the same core idea. ' +
-    'Do not invent a different business. Only if the verdict is Abort may you name an alternative, ' +
-    'and then say clearly "drop this plan". ' +
+    'Synthesize these into a concrete Barbell plan:\n' +
+    '1. rationale: 2-3 sentences explaining why ' + deterministicScore.verdict + ' was reached based on the math above.\n' +
+    '2. killCriteria: 2 to 3 numbered triggers: "1. Stop if... 2. Stop if...".\n' +
+    '3. whatWouldChangeMyMind: exactly one clear sentence stating what observable evidence or milestone would flip this verdict.\n' +
+    '4. unfairAdvantage: describe the Thiel Ceiling competitive moat.\n' +
+    '5. nextActions: exactly 3 immediate action steps, each starting with an active verb.\n' +
     USER_FACTS_RULE + ' ' +
     RECONCILE_PLAN_RULE;
 
-  const { result, model } = await callGeminiWithFallback({
-    models: [GEMINI_MAIN_MODEL, 'groq'],
-    build: async (modelName) => {
-      let text = '';
-      if (modelName === 'groq') {
-        text = await callGroqText(user, system, 0.5);
+  const providers = [GEMINI_MAIN_MODEL, GEMINI_LITE_MODEL, 'groq'];
+
+  const { result: parsed, provider } = await callModelWithFallback({
+    providers,
+    timeoutMs: 14000,
+    build: async (p) => {
+      let data = null;
+      if (p === 'groq') {
+        data = await callGroqJson(user, system, 0.2);
       } else {
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: user,
-          config: {
-            systemInstruction: system,
-            temperature: 0.5,
-            responseMimeType: 'application/json'
-          }
-        });
-        text =
-          (response && response.text) ||
-          (response &&
-            response.candidates &&
-            response.candidates[0] &&
-            response.candidates[0].content &&
-            response.candidates[0].content.parts &&
-            response.candidates[0].content.parts.map((p) => p.text || '').join('')) ||
-          '';
+        data = await callGeminiJson(ai, p, user, system, 0.2);
       }
-      const parsed = extractJson(text);
-      if (!parsed) throw new Error('Synthesis brain returned non-JSON content.');
-
-      let confidence = Number(parsed.confidence);
-      if (!Number.isFinite(confidence)) confidence = 50;
-      confidence = Math.max(0, Math.min(100, Math.round(confidence)));
-
-      const actions = Array.isArray(parsed.nextActions)
-        ? parsed.nextActions.filter(Boolean).slice(0, 3)
-        : [];
-
-      return {
-        verdict: parsed.verdict || 'Pivot',
-        confidence,
-        killCriteria: parsed.killCriteria || '',
-        unfairAdvantage: parsed.unfairAdvantage || '',
-        nextActions: actions
-      };
+      if (data && typeof data === 'object') {
+        const actions = Array.isArray(data.nextActions)
+          ? data.nextActions.filter(Boolean).slice(0, 3)
+          : [];
+        return {
+          rationale: data.rationale || data.summary || '',
+          killCriteria: data.killCriteria || '',
+          whatWouldChangeMyMind: data.whatWouldChangeMyMind || '',
+          unfairAdvantage: data.unfairAdvantage || '',
+          nextActions: actions
+        };
+      }
+      return null;
     }
   });
 
-  return { result, model };
+  return {
+    result: {
+      verdict: deterministicScore.verdict,
+      confidence: deterministicScore.confidence,
+      confidenceMath: deterministicScore.math,
+      rationale: parsed.rationale,
+      killCriteria: parsed.killCriteria,
+      whatWouldChangeMyMind: parsed.whatWouldChangeMyMind,
+      unfairAdvantage: parsed.unfairAdvantage,
+      nextActions: parsed.nextActions
+    },
+    model: provider
+  };
 }
 
 export async function POST(request) {
@@ -614,30 +609,77 @@ export async function POST(request) {
       );
     }
 
-    const question =
+    const rawQuestion =
       body && typeof (body.idea || body.question) === 'string'
         ? (body.idea || body.question).trim()
         : '';
 
-    if (!question) {
+    if (!rawQuestion) {
       return NextResponse.json(
         { success: false, error: 'Missing required field: question or idea.' },
         { status: 400 }
       );
     }
 
+    // Input cap: max 500 characters
+    const question = rawQuestion.slice(0, 500);
     const constraints = cleanConstraints(body && body.constraints);
 
+    // Fast Non-Barbell Operational Filter
+    const isTrivial = /^(what should i eat|which shirt|pizza or pasta|what movie to watch|what shoes to buy)/i.test(question);
+    if (isTrivial) {
+      return NextResponse.json({
+        success: true,
+        data: {
+          isBarbellFit: false,
+          message: 'This is an operational or everyday choice with no fat-tailed ruin risk or power-law asymmetry. A Barbell audit is not needed for low-stakes reversible decisions.'
+        }
+      });
+    }
+
+    // Phase 1: Live Grounding Scanner
     const grounding = await runGrounding(question);
     const briefing = grounding && grounding.summary ? grounding.summary : '';
 
-    const [talebResult, thielOut] = await Promise.all([
+    // Phase 2: Parallel Audits with Fallbacks
+    const [talebSettled, thielSettled] = await Promise.allSettled([
       runTaleb(question, briefing, constraints),
       runThiel(question, briefing, constraints)
     ]);
-    const thielResult = thielOut.result;
 
-    const synthesisOut = await runSynthesis(question, talebResult, thielResult, briefing, constraints);
+    const talebOut = talebSettled.status === 'fulfilled' ? talebSettled.value : null;
+    const thielOut = thielSettled.status === 'fulfilled' ? thielSettled.value : null;
+
+    if (!talebOut && !thielOut) {
+      throw new Error('Both Taleb and Thiel audits failed across all available providers.');
+    }
+
+    const talebResult = talebOut ? talebOut.result : {
+      claim: 'Downside audit unavailable.',
+      absorbingBarrier: 'Could not compute absorbing barrier.',
+      ruinProximity: 'moderate',
+      viaNegativa: [],
+      recommendation: 'Verify financial downside manually.'
+    };
+
+    const thielResult = thielOut ? thielOut.result : {
+      claim: 'Upside audit unavailable.',
+      secret: 'Could not compute non-consensus secret.',
+      asymmetryTier: 'linear',
+      secretQuality: 'consensus',
+      monopolyAngle: 'Unverified.',
+      recommendation: 'Verify market differentiation manually.'
+    };
+
+    // Phase 3: Pure Deterministic Score Calculation
+    const deterministicScore = calculateDeterministicConfidence({
+      taleb: talebResult,
+      thiel: thielResult,
+      constraints
+    });
+
+    // Phase 4: Synthesis
+    const synthesisOut = await runSynthesis(question, talebResult, thielResult, briefing, constraints, deterministicScore);
     const synthesis = synthesisOut.result;
 
     return NextResponse.json(
@@ -647,14 +689,17 @@ export async function POST(request) {
           taleb: talebResult,
           thiel: thielResult,
           synthesis,
+          constraints,
           grounding: {
             summary: grounding && grounding.summary ? grounding.summary : '',
             sources: grounding && Array.isArray(grounding.sources) ? grounding.sources : []
           },
           meta: {
             grounding: grounding && grounding.model ? grounding.model : 'none',
-            thiel: thielOut.model,
-            synthesis: synthesisOut.model
+            taleb: talebOut ? talebOut.model : 'failed',
+            thiel: thielOut ? thielOut.model : 'failed',
+            synthesis: synthesisOut.model,
+            scoring: 'deterministic_code_v1'
           }
         }
       },
