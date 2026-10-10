@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'openai/gpt-oss-120b';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 const GEMINI_MAIN_MODEL = 'gemini-2.5-flash';
 const GEMINI_LITE_MODEL = 'gemini-2.0-flash-lite';
 
