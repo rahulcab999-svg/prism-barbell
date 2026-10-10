@@ -319,7 +319,7 @@ async function runTaleb(question, briefing, constraints) {
     PLAIN_ENGLISH + ' ' +
     NO_MARKDOWN + ' ' +
     'Return ONLY a valid JSON object matching this schema: ' +
-    '{ "claim": "string", "absorbingBarrier": "string", "ruinProximity": "critical | moderate | negligible", "viaNegativa": ["string"], "recommendation": "string" }';
+    '{ "claim": "string", "absorbingBarrier": "string", "ruinProximity": "critical | moderate | negligible", "exceedsMaxLoss": boolean, "viaNegativa": ["string"], "recommendation": "string" }';
 
   let user =
     'Audit this decision strictly for downside and ruin risk:\n\n' +
@@ -369,6 +369,7 @@ async function runTaleb(question, briefing, constraints) {
           claim: data.claim || '',
           absorbingBarrier: data.absorbingBarrier || '',
           ruinProximity: rp,
+          exceedsMaxLoss: Boolean(data.exceedsMaxLoss),
           viaNegativa: Array.isArray(data.viaNegativa) ? data.viaNegativa.filter(Boolean) : [],
           recommendation: data.recommendation || ''
         };
@@ -485,11 +486,7 @@ function calculateDeterministicConfidence({ taleb, thiel, constraints }) {
   }
 
   // Taleb ruin penalties
-  const maxLossExceeded = !!(
-    constraints?.maxLoss &&
-    taleb?.absorbingBarrier &&
-    /exceed|insufficient|ruin|wip/i.test(taleb.absorbingBarrier)
-  );
+  const maxLossExceeded = Boolean(constraints?.maxLoss && taleb?.exceedsMaxLoss);
 
   if (taleb?.ruinProximity === 'critical' || maxLossExceeded) {
     score -= 40;
@@ -658,6 +655,7 @@ export async function POST(request) {
       claim: 'Downside audit unavailable.',
       absorbingBarrier: 'Could not compute absorbing barrier.',
       ruinProximity: 'moderate',
+      exceedsMaxLoss: false,
       viaNegativa: [],
       recommendation: 'Verify financial downside manually.'
     };
