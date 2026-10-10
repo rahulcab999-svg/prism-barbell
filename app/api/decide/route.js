@@ -60,7 +60,7 @@ const RECONCILE_PLAN_RULE =
 function cleanConstraints(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const out = {};
-  const fields = ['maxLoss', 'horizon', 'fallback'];
+  const fields = ['maxLoss', 'horizon', 'fallback' 'reversibility'];
   for (const f of fields) {
     const v = raw[f];
     if (typeof v !== 'string') continue;
@@ -490,12 +490,16 @@ function calculateDeterministicConfidence({ taleb, thiel, constraints }) {
   // Taleb ruin penalties
   const maxLossExceeded = Boolean(constraints?.maxLoss && taleb?.exceedsMaxLoss);
 
+  const isReversible = constraints?.reversibility === 'Easy to reverse';
+
   if (taleb?.ruinProximity === 'critical' || maxLossExceeded) {
     score -= 40;
     math.ruinProximity = -40;
   } else if (taleb?.ruinProximity === 'moderate') {
-    score -= 20;
-    math.ruinProximity = -20;
+    // If the bet is easily reversible (two-way door), failure is not fatal
+    const penalty = isReversible ? -10 : -20;
+    score += penalty;
+    math.ruinProximity = penalty;
   } else {
     math.ruinProximity = 0;
   }
