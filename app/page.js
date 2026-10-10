@@ -494,7 +494,7 @@ export default function Home() {
     const main = t.claim || t.audit || t.analysis || t.summary || t.critique || t.text || "";
     const barrier = t.absorbingBarrier || t.ruinRisk || t.absorbing_barrier || t.barrier || "";
     const viaNegativa = t.viaNegativa || t.via_negativa || t.thingsToAvoid || t.avoid || null;
-    const used = new Set(["claim","audit","analysis","summary","critique","text","absorbingBarrier","ruinRisk","absorbing_barrier","barrier","viaNegativa","via_negativa","thingsToAvoid","avoid"]);
+    const used = new Set(["claim","audit","analysis","summary","critique","text","absorbingBarrier","ruinRisk","absorbing_barrier","barrier","viaNegativa","via_negativa","thingsToAvoid","avoid","exceedsMaxLoss"]);
     const extras = Object.entries(t).filter(([k, v]) => !used.has(k) && v !== null && v !== undefined && v !== "");
     return { main, barrier, viaNegativa, extras };
   }
