@@ -101,6 +101,7 @@ function normalizeConstraints(c) {
   if (c.maxLoss) ordered.maxLoss = c.maxLoss;
   if (c.horizon) ordered.horizon = c.horizon;
   if (c.fallback) ordered.fallback = c.fallback;
+  if (c.reversibility) ordered.reversibility = c.reversibility;
   if (!Object.keys(ordered).length) return "";
   return JSON.stringify(ordered);
 }
@@ -158,6 +159,7 @@ export default function Home() {
   const [maxLoss, setMaxLoss] = useState("");
   const [timeHorizon, setTimeHorizon] = useState("");
   const [fallbackPlan, setFallbackPlan] = useState("");
+  const [inputReversibility, setInputReversibility] = useState("");
   const [usedConstraints, setUsedConstraints] = useState(null);
 
   const [grounding, setGrounding] = useState({ summary: "", sources: [] });
@@ -213,9 +215,11 @@ export default function Home() {
     const ml = String(maxLoss || "").trim();
     const th = String(timeHorizon || "").trim();
     const fp = String(fallbackPlan || "").trim();
+    const ir = String(inputReversibility || "").trim();
     if (ml) c.maxLoss = ml;
     if (th) c.horizon = th;
     if (fp) c.fallback = fp;
+    if (ir) c.reversibility = ir;
     return Object.keys(c).length ? c : null;
   }
 
@@ -245,7 +249,7 @@ export default function Home() {
         setHorizonDays(30);
         setPremortem("");
         setSkepticView("");
-        setReversibility("");
+        setReversibility(constraints?.reversibility || "");
         setSaveOpen(false);
         return;
       }
@@ -264,7 +268,7 @@ export default function Home() {
     setHorizonDays(30);
     setPremortem("");
     setSkepticView("");
-    setReversibility("");
+    setReversibility(constraints?.reversibility || "");
     setSaveOpen(false);
 
     const controller = new AbortController();
@@ -682,19 +686,20 @@ export default function Home() {
       invalidationTrigger,
       premortem,
       skepticView,
-      reversibility,
+      reversibility: reversibility || inputReversibility || "",
       horizonDays,
       checkInDate,
       review: null,
     };
     if (
       usedConstraints &&
-      (usedConstraints.maxLoss || usedConstraints.horizon || usedConstraints.fallback)
+      (usedConstraints.maxLoss || usedConstraints.horizon || usedConstraints.fallback || usedConstraints.reversibility)
     ) {
       entry.constraints = {
         maxLoss: usedConstraints.maxLoss || "",
         horizon: usedConstraints.horizon || "",
         fallback: usedConstraints.fallback || "",
+        reversibility: usedConstraints.reversibility || "",
       };
     }
     setJournal((j) => [entry, ...j]);
@@ -722,28 +727,30 @@ export default function Home() {
 
   function calcCalibration(entries) {
     const reviewed = entries.filter((e) => e.review && e.review.quality);
-    const confident = reviewed.filter((e) => num(e.locked?.confidence) >= 70);
-    const goodOutcomes = confident.filter((e) => e.review.quality === "Earned Success" || e.review.quality === "Dumb Luck");
-    const hitRate = confident.length ? goodOutcomes.length / confident.length : 0;
-    const avgConf = confident.length ? confident.reduce((s, e) => s + num(e.locked?.confidence), 0) / confident.length / 100 : 0;
-    const brier = confident.length
-      ? confident.reduce((s, e) => {
-          const p = num(e.locked?.confidence) / 100;
-          const o = e.review.quality === "Earned Success" || e.review.quality === "Dumb Luck" ? 1 : 0;
-          return s + Math.pow(p - o, 2);
-        }, 0) / confident.length
-      : 0;
+    if (!reviewed.length) {
+      return { total: entries.length, reviewedCount: 0, hitRate: 0, avgConf: 0, brier: 0, label: "no data", enough: false };
+    }
+    const successfulOutcomes = reviewed.filter((e) => e.review.quality === "Earned Success" || e.review.quality === "Dumb Luck");
+    const hitRate = successfulOutcomes.length / reviewed.length;
+    const avgConf = reviewed.reduce((s, e) => s + num(e.locked?.confidence), 0) / reviewed.length / 100;
+    const brier = reviewed.reduce((s, e) => {
+      const p = num(e.locked?.confidence) / 100;
+      const o = (e.review.quality === "Earned Success" || e.review.quality === "Dumb Luck") ? 1 : 0;
+      return s + Math.pow(p - o, 2);
+    }, 0) / reviewed.length;
+
     let label = "well calibrated";
     if (avgConf - hitRate > 0.15) label = "overconfident";
     else if (hitRate - avgConf > 0.15) label = "underconfident";
+
     return {
-      total: reviewed.length,
-      confidentCount: confident.length,
+      total: entries.length,
+      reviewedCount: reviewed.length,
       hitRate,
       avgConf,
       brier,
       label,
-      enough: confident.length >= 3,
+      enough: reviewed.length >= 3,
     };
   }
 
@@ -824,11 +831,12 @@ export default function Home() {
       lines.push(`### Pre-mortem`);
       lines.push(e.premortem || "Not recorded");
       lines.push("");
-      if (e.constraints && (e.constraints.maxLoss || e.constraints.horizon || e.constraints.fallback)) {
+      if (e.constraints && (e.constraints.maxLoss || e.constraints.horizon || e.constraints.fallback || e.constraints.reversibility)) {
         lines.push(`### Personal Limits`);
         if (e.constraints.maxLoss) lines.push(`- Max loss: ${e.constraints.maxLoss}`);
         if (e.constraints.horizon) lines.push(`- Horizon: ${e.constraints.horizon}`);
         if (e.constraints.fallback) lines.push(`- Fallback: ${e.constraints.fallback}`);
+        if (e.constraints.reversibility) lines.push(`- Reversibility: ${e.constraints.reversibility}`);
         lines.push("");
       }
       lines.push(`### Skeptic View`);
@@ -994,6 +1002,7 @@ export default function Home() {
     if (entry.constraints?.maxLoss) constraintBits.push(`Max loss: ${entry.constraints.maxLoss}`);
     if (entry.constraints?.horizon) constraintBits.push(`Horizon: ${entry.constraints.horizon}`);
     if (entry.constraints?.fallback) constraintBits.push(`Fallback: ${entry.constraints.fallback}`);
+    if (entry.constraints?.reversibility) constraintBits.push(`Reversibility: ${entry.constraints.reversibility}`);
 
     return (
       <div style={{ ...cardStyle, marginBottom: 16 }}>
@@ -1239,7 +1248,8 @@ export default function Home() {
   const hasAnyConstraint = !!(
     String(maxLoss).trim() ||
     String(timeHorizon).trim() ||
-    String(fallbackPlan).trim()
+    String(fallbackPlan).trim() ||
+    String(inputReversibility).trim()
   );
 
   const usedConstraintBits = usedConstraints
@@ -1247,6 +1257,7 @@ export default function Home() {
         usedConstraints.maxLoss && `Max loss: ${usedConstraints.maxLoss}`,
         usedConstraints.horizon && `Horizon: ${usedConstraints.horizon}`,
         usedConstraints.fallback && `Fallback: ${usedConstraints.fallback}`,
+        usedConstraints.reversibility && `Reversibility: ${usedConstraints.reversibility}`,
       ].filter(Boolean)
     : [];
 
@@ -1335,12 +1346,27 @@ export default function Home() {
                     maxLength={200}
                     style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e0dccf", fontSize: 15, outline: "none", marginBottom: 12 }}
                   />
+
+                  <div style={{ marginBottom: 6, fontSize: 13, color: "#5a5142" }}>Reversibility</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                    {["Easy to reverse", "Hard to reverse", "One-way door"].map((v) => (
+                      <Pill
+                        key={v}
+                        active={inputReversibility === v}
+                        onClick={() => setInputReversibility(inputReversibility === v ? "" : v)}
+                      >
+                        {v}
+                      </Pill>
+                    ))}
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => {
                       setMaxLoss("");
                       setTimeHorizon("");
                       setFallbackPlan("");
+                      setInputReversibility("");
                       setConstraintsOpen(false);
                       decide(false, true);
                     }}
